@@ -2,7 +2,7 @@
 Qt model for image file management
 """
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QThread, pyqtSignal
+from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QImage
 from typing import Dict, Optional, List
 import hashlib
@@ -19,8 +19,8 @@ class ImageCacheItem:
 
 class ImageLoadWorker(QThread):
     """Worker thread for loading images"""
-    image_loaded = pyqtSignal(str, QPixmap)  # hothash, pixmap
-    error_occurred = pyqtSignal(str, str)  # hothash, error
+    image_loaded = Signal(str, QPixmap)  # hothash, pixmap
+    error_occurred = Signal(str, str)  # hothash, error
     
     def __init__(self, api_client: ImaLinkClient, hothash: str):
         super().__init__()

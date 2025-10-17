@@ -4,7 +4,7 @@ Photo card widget for detailed photo display
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QFrame, QPushButton)
-from PySide6.QtCore import Qt, pyqtSignal, QSize
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QPixmap, QFont
 
 from ...api.models import Photo
@@ -13,8 +13,8 @@ from ...api.models import Photo
 class PhotoCard(QFrame):
     """Card widget for displaying photo information"""
     
-    edit_requested = pyqtSignal(Photo)
-    delete_requested = pyqtSignal(Photo)
+    edit_requested = Signal(Photo)
+    delete_requested = Signal(Photo)
     
     def __init__(self, photo: Photo, thumbnail_pixmap: QPixmap = None):
         super().__init__()

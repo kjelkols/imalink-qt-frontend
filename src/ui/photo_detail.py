@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QLineEdit, QTextEdit, QSpinBox, QPushButton,
                                QScrollArea, QWidget, QFrame, QMessageBox,
                                QDialogButtonBox, QGroupBox, QGridLayout)
-from PySide6.QtCore import Qt, QThread, pyqtSignal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QFont
 
 from ..api.client import ImaLinkClient
@@ -85,14 +85,80 @@ class PhotoDetailDialog(QDialog):
         hothash_label.setFont(font)
         info_layout.addWidget(hothash_label, 0, 1)
         
-        info_layout.addWidget(QLabel("ID:"), 1, 0)
-        info_layout.addWidget(QLabel(str(self.photo.id)), 1, 1)
+        row = 1
         
-        info_layout.addWidget(QLabel("Created:"), 2, 0)
-        info_layout.addWidget(QLabel(self.photo.created_at), 2, 1)
+        # Handle missing ID field gracefully
+        if hasattr(self.photo, 'id') and self.photo.id is not None:
+            info_layout.addWidget(QLabel("ID:"), row, 0)
+            info_layout.addWidget(QLabel(str(self.photo.id)), row, 1)
+            row += 1
         
-        info_layout.addWidget(QLabel("Updated:"), 3, 0)
-        info_layout.addWidget(QLabel(self.photo.updated_at), 3, 1)
+        # Date taken (from EXIF)
+        if self.photo.taken_at:
+            info_layout.addWidget(QLabel("📅 Date Taken:"), row, 0)
+            # Format the date nicely
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(self.photo.taken_at.replace('Z', '+00:00'))
+                formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                formatted_date = self.photo.taken_at
+            info_layout.addWidget(QLabel(formatted_date), row, 1)
+            row += 1
+        
+        # GPS information
+        if self.photo.has_gps and self.photo.gps_latitude and self.photo.gps_longitude:
+            info_layout.addWidget(QLabel("🌍 GPS Location:"), row, 0)
+            lat = self.photo.gps_latitude
+            lon = self.photo.gps_longitude
+            gps_text = f"{lat:.6f}, {lon:.6f}"
+            
+            # Create a clickable GPS label
+            gps_label = QLabel(f'<a href="https://www.google.com/maps?q={lat},{lon}">{gps_text}</a>')
+            gps_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+            gps_label.setOpenExternalLinks(True)
+            info_layout.addWidget(gps_label, row, 1)
+            row += 1
+        elif self.photo.has_gps:
+            info_layout.addWidget(QLabel("🌍 GPS:"), row, 0)
+            info_layout.addWidget(QLabel("Location available (coordinates missing)"), row, 1)
+            row += 1
+        
+        # Image dimensions
+        if self.photo.width and self.photo.height:
+            info_layout.addWidget(QLabel("📐 Dimensions:"), row, 0)
+            info_layout.addWidget(QLabel(f"{self.photo.width} × {self.photo.height} pixels"), row, 1)
+            row += 1
+        
+        # Primary filename
+        if self.photo.primary_filename:
+            info_layout.addWidget(QLabel("📄 Primary File:"), row, 0)
+            filename_label = QLabel(self.photo.primary_filename)
+            filename_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            info_layout.addWidget(filename_label, row, 1)
+            row += 1
+        
+        # File count
+        if self.photo.files:
+            info_layout.addWidget(QLabel("📁 File Count:"), row, 0)
+            file_count_text = f"{len(self.photo.files)} file(s)"
+            if self.photo.has_raw_companion:
+                file_count_text += " (includes RAW)"
+            info_layout.addWidget(QLabel(file_count_text), row, 1)
+            row += 1
+        
+        # Import session
+        if self.photo.import_session_id:
+            info_layout.addWidget(QLabel("📦 Import Session:"), row, 0)
+            info_layout.addWidget(QLabel(str(self.photo.import_session_id)), row, 1)
+            row += 1
+        
+        info_layout.addWidget(QLabel("🕒 Created:"), row, 0)
+        info_layout.addWidget(QLabel(self.photo.created_at), row, 1)
+        row += 1
+        
+        info_layout.addWidget(QLabel("🕒 Updated:"), row, 0)
+        info_layout.addWidget(QLabel(self.photo.updated_at), row, 1)
         
         preview_layout.addLayout(info_layout)
         parent_layout.addWidget(preview_group)
@@ -260,8 +326,8 @@ class PhotoDetailDialog(QDialog):
 
 class ThumbnailLoadWorker(QThread):
     """Worker thread for loading photo thumbnail"""
-    thumbnail_loaded = pyqtSignal(bytes)
-    error_occurred = pyqtSignal(str)
+    thumbnail_loaded = Signal(bytes)
+    error_occurred = Signal(str)
     
     def __init__(self, api_client, hothash):
         super().__init__()

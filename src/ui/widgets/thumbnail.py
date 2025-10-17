@@ -3,7 +3,7 @@ Thumbnail widget for displaying photo thumbnails
 """
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
-from PySide6.QtCore import Qt, QThread, pyqtSignal, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QPixmap, QFont, QCursor
 
 from ...api.client import ImaLinkClient
@@ -12,17 +12,18 @@ from ...api.models import Photo
 
 class ThumbnailLoadWorker(QThread):
     """Worker thread for loading thumbnail images"""
-    thumbnail_loaded = pyqtSignal(bytes)
-    error_occurred = pyqtSignal(str)
+    thumbnail_loaded = Signal(bytes)
+    error_occurred = Signal(str)
     
-    def __init__(self, api_client, hothash):
+    def __init__(self, api_client, photo):
         super().__init__()
         self.api_client = api_client
-        self.hothash = hothash
+        self.photo = photo
     
     def run(self):
         try:
-            thumbnail_data = self.api_client.get_photo_thumbnail(self.hothash)
+            # Use hotpreview data directly if available
+            thumbnail_data = self.api_client.get_hotpreview_bytes(self.photo)
             self.thumbnail_loaded.emit(thumbnail_data)
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -31,7 +32,7 @@ class ThumbnailLoadWorker(QThread):
 class ThumbnailWidget(QFrame):
     """Widget for displaying a photo thumbnail with metadata"""
     
-    clicked = pyqtSignal(Photo)
+    clicked = Signal(Photo)
     
     def __init__(self, photo: Photo, api_client: ImaLinkClient):
         super().__init__()
@@ -114,7 +115,8 @@ class ThumbnailWidget(QFrame):
     
     def load_thumbnail(self):
         """Load thumbnail image from API"""
-        self.worker = ThumbnailLoadWorker(self.api_client, self.photo.hothash)
+        # Load thumbnail in background thread
+        self.worker = ThumbnailLoadWorker(self.api_client, self.photo)
         self.worker.thumbnail_loaded.connect(self.on_thumbnail_loaded)
         self.worker.error_occurred.connect(self.on_thumbnail_error)
         self.worker.start()

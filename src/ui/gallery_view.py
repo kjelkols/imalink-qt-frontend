@@ -5,7 +5,7 @@ Gallery view for displaying photo thumbnails
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
                                QLabel, QLineEdit, QPushButton, QGridLayout,
                                QFrame, QSpinBox, QComboBox, QMessageBox)
-from PySide6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QPixmap
 
 from .widgets.thumbnail import ThumbnailWidget
@@ -15,8 +15,8 @@ from ..api.models import Photo
 
 class PhotoLoadWorker(QThread):
     """Worker thread for loading photos"""
-    photos_loaded = pyqtSignal(list)
-    error_occurred = pyqtSignal(str)
+    photos_loaded = Signal(list)
+    error_occurred = Signal(str)
     
     def __init__(self, api_client, skip=0, limit=100):
         super().__init__()

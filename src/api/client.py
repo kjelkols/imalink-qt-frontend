@@ -30,7 +30,17 @@ class ImaLinkClient:
         )
         response.raise_for_status()
         data = response.json()
-        return [Photo(**item) for item in data["items"]]
+        
+        # Handle different response formats
+        if "data" in data:
+            # New format: {"data": [...], "meta": {...}}
+            return [Photo(**item) for item in data["data"]]
+        elif "items" in data:
+            # Old format: {"items": [...], "total": ...}
+            return [Photo(**item) for item in data["items"]]
+        else:
+            # Direct array format: [...]
+            return [Photo(**item) for item in data]
     
     def get_photo(self, hothash: str) -> Photo:
         """Get single photo by hothash"""
@@ -45,6 +55,39 @@ class ImaLinkClient:
         )
         response.raise_for_status()
         return response.content
+    
+    def get_hotpreview_bytes(self, photo: Photo) -> bytes:
+        """Decode base64 hotpreview to JPEG bytes"""
+        if photo.hotpreview:
+            try:
+                # First decode from base64
+                decoded_data = base64.b64decode(photo.hotpreview)
+                
+                # Check if it looks like base64-encoded JPEG data
+                if decoded_data.startswith(b'/9j/'):
+                    # Double-encoded: decode again
+                    return base64.b64decode(decoded_data)
+                elif decoded_data.startswith(b'\xff\xd8\xff'):
+                    # Already JPEG bytes
+                    return decoded_data
+                else:
+                    # Check if it's plain text (like "test")
+                    try:
+                        text = decoded_data.decode('utf-8')
+                        print(f"Invalid JPEG header: {text}")
+                        # Fallback to API endpoint for real image
+                        return self.get_photo_thumbnail(photo.hothash)
+                    except:
+                        # Not text, maybe corrupted data
+                        print(f"Invalid JPEG header: {decoded_data[:10].hex()}")
+                        return self.get_photo_thumbnail(photo.hothash)
+            except Exception as e:
+                print(f"Error decoding hotpreview: {e}")
+                # Fallback to API endpoint
+                return self.get_photo_thumbnail(photo.hothash)
+        else:
+            # No hotpreview data, use API endpoint
+            return self.get_photo_thumbnail(photo.hothash)
     
     def search_photos(self, title: str = None, tags: List[str] = None,
                      rating_min: int = None, rating_max: int = None) -> List[Photo]:
@@ -112,14 +155,26 @@ class ImaLinkClient:
             payload["import_session_id"] = session_id
         
         response = self.session.post(
-            f"{self.base_url}/images/import",
+            f"{self.base_url}/image-files/",
             json=payload
         )
         response.raise_for_status()
         return response.json()
     
-    def bulk_import(self, file_paths: List[str], session_id: int = None) -> dict:
-        """Import multiple image files"""
+    def bulk_import(self, file_paths: List[str], session_name: str = None, 
+                   import_path: str = None) -> dict:
+        """Import multiple image files directly via image-files endpoint"""
+        # Generate a simple session ID (timestamp-based for now)
+        # The backend can track this via the import_session_id field
+        from datetime import datetime
+        import time
+        
+        if session_name is None:
+            session_name = f"Import {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Use timestamp as session ID (backend should handle this properly)
+        session_id = int(time.time())
+        
         results = []
         errors = []
         
@@ -131,6 +186,8 @@ class ImaLinkClient:
                 errors.append({"file_path": file_path, "error": str(e)})
         
         return {
+            "session_id": session_id,
+            "session_name": session_name,
             "imported": len(results),
             "errors": len(errors),
             "results": results,

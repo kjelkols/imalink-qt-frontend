@@ -2,7 +2,7 @@
 Qt model for photo data management
 """
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSignal
+from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, Signal
 from typing import List, Optional
 
 from ..api.models import Photo
@@ -22,7 +22,7 @@ class PhotoListModel(QAbstractListModel):
     TagsRole = Qt.UserRole + 7
     CreatedAtRole = Qt.UserRole + 8
     
-    dataChanged = pyqtSignal()
+    dataChanged = Signal()
     
     def __init__(self, api_client: ImaLinkClient = None):
         super().__init__()

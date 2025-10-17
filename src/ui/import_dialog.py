@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QFileDialog, QListWidget,
                                QListWidgetItem, QProgressBar, QTextEdit,
                                QMessageBox, QDialogButtonBox)
-from PySide6.QtCore import Qt, QThread, pyqtSignal
+from PySide6.QtCore import Qt, QThread, Signal
 from pathlib import Path
 
 from ..api.client import ImaLinkClient
@@ -14,23 +14,46 @@ from ..api.client import ImaLinkClient
 
 class ImportWorker(QThread):
     """Worker thread for importing images"""
-    progress_updated = pyqtSignal(int, int)  # current, total
-    import_completed = pyqtSignal(dict)
-    error_occurred = pyqtSignal(str)
+    progress_updated = Signal(int, int)  # current, total
+    import_completed = Signal(dict)
+    error_occurred = Signal(str)
     
-    def __init__(self, api_client, file_paths, session_id=None):
+    def __init__(self, api_client, file_paths, session_name=None, import_path=None):
         super().__init__()
         self.api_client = api_client
         self.file_paths = file_paths
-        self.session_id = session_id
+        self.session_name = session_name
+        self.import_path = import_path
+        self.session_id = None
     
     def run(self):
         try:
+            # Generate session ID using timestamp
+            from datetime import datetime
+            import time
+            
+            if self.session_name is None:
+                self.session_name = f"Import {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Use timestamp as session ID (backend tracks via import_session_id field)
+            self.session_id = int(time.time())
+            
+            # Import files one by one directly via image-files endpoint
             results = []
             errors = []
             
             for i, file_path in enumerate(self.file_paths):
                 try:
+                    # Filter to JPEG only for now (as requested)
+                    from pathlib import Path
+                    file_ext = Path(file_path).suffix.lower()
+                    if file_ext not in ['.jpg', '.jpeg']:
+                        errors.append({
+                            "file_path": file_path, 
+                            "error": f"Skipped non-JPEG file: {file_ext}"
+                        })
+                        continue
+                    
                     result = self.api_client.import_image(file_path, self.session_id)
                     results.append(result)
                 except Exception as e:
@@ -39,6 +62,8 @@ class ImportWorker(QThread):
                 self.progress_updated.emit(i + 1, len(self.file_paths))
             
             import_result = {
+                "session_id": self.session_id,
+                "session_name": self.session_name,
                 "imported": len(results),
                 "errors": len(errors),
                 "results": results,
@@ -71,22 +96,29 @@ class ImportDialog(QDialog):
         
         # Instructions
         instructions = QLabel(
-            "Select image files to import into ImaLink.\n"
-            "Supported formats: JPEG, PNG, TIFF, BMP"
+            "Import JPEG images into ImaLink.\n"
+            "Select individual files or scan an entire folder for JPEG images.\n"
+            "An import session will be created automatically to track this batch."
         )
         layout.addWidget(instructions)
         
         # File selection
         file_layout = QHBoxLayout()
         self.file_count_label = QLabel("No files selected")
-        select_button = QPushButton("Select Files...")
-        select_button.clicked.connect(self.select_files)
+        
+        select_files_button = QPushButton("Select Files...")
+        select_files_button.clicked.connect(self.select_files)
+        
+        select_folder_button = QPushButton("Select Folder...")
+        select_folder_button.clicked.connect(self.select_folder)
+        
         clear_button = QPushButton("Clear")
         clear_button.clicked.connect(self.clear_files)
         
         file_layout.addWidget(self.file_count_label)
         file_layout.addStretch()
-        file_layout.addWidget(select_button)
+        file_layout.addWidget(select_files_button)
+        file_layout.addWidget(select_folder_button)
         file_layout.addWidget(clear_button)
         layout.addLayout(file_layout)
         
@@ -122,12 +154,51 @@ class ImportDialog(QDialog):
         file_dialog = QFileDialog(self)
         file_dialog.setFileMode(QFileDialog.ExistingFiles)
         file_dialog.setNameFilter(
-            "Image Files (*.jpg *.jpeg *.png *.tiff *.tif *.bmp);;All Files (*)"
+            "JPEG Images (*.jpg *.jpeg);;All Files (*)"  # Only JPEG for now
         )
         
         if file_dialog.exec():
             selected_files = file_dialog.selectedFiles()
+            self.selected_folder = None  # Clear folder selection
             self.add_files(selected_files)
+    
+    def select_folder(self):
+        """Open folder dialog to select directory with images"""
+        folder_dialog = QFileDialog(self)
+        folder_dialog.setFileMode(QFileDialog.Directory)
+        folder_dialog.setOption(QFileDialog.ShowDirsOnly, True)
+        
+        if folder_dialog.exec():
+            selected_folders = folder_dialog.selectedFiles()
+            if selected_folders:
+                folder_path = selected_folders[0]
+                self.selected_folder = folder_path
+                self.scan_folder_for_images(folder_path)
+    
+    def scan_folder_for_images(self, folder_path: str):
+        """Scan folder for JPEG images"""
+        from pathlib import Path
+        
+        folder = Path(folder_path)
+        jpeg_files = []
+        
+        # Scan for JPEG files (recursive)
+        for ext in ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']:
+            jpeg_files.extend(folder.rglob(ext))
+        
+        # Convert to strings and add to file list
+        file_paths = [str(f) for f in jpeg_files]
+        self.clear_files()  # Clear existing selection
+        self.add_files(file_paths)
+        
+        # Update instructions
+        if file_paths:
+            self.status_text.clear()
+            self.status_text.append(f"Found {len(file_paths)} JPEG files in folder:")
+            self.status_text.append(f"{folder_path}")
+        else:
+            self.status_text.clear() 
+            self.status_text.append("No JPEG files found in selected folder.")
     
     def add_files(self, file_paths):
         """Add files to the import list"""
@@ -176,7 +247,15 @@ class ImportDialog(QDialog):
         self.status_text.append("Starting import...")
         
         # Start worker thread
-        self.worker = ImportWorker(self.api_client, self.file_paths)
+        session_name = f"Import {len(self.file_paths)} files"
+        import_path = getattr(self, 'selected_folder', None) or "liste"
+        
+        self.worker = ImportWorker(
+            self.api_client, 
+            self.file_paths, 
+            session_name=session_name,
+            import_path=import_path
+        )
         self.worker.progress_updated.connect(self.on_progress_updated)
         self.worker.import_completed.connect(self.on_import_completed)
         self.worker.error_occurred.connect(self.on_error)

@@ -82,8 +82,12 @@ The application connects to the backend API at `http://localhost:8000/api/v1` by
 - Update `base_url` in `src/api/client.py` if needed
 - Example: `http://172.20.10.2:8000/api/v1`
 
-## Development
+## Documentation
 
 **⚠️ IMPORTANT: Read `DEVELOPMENT.md` first for critical development information!**
 
-See `QT_FRONTEND_GUIDE.md` for detailed development instructions and API reference.
+For comprehensive documentation, see the main backend repository:
+- **API Reference**: [Backend Repository - API_REFERENCE.md](https://github.com/kjelkols/imalink/blob/main/API_REFERENCE.md)
+- **Qt Frontend Development Guide**: [Backend Repository - QT_FRONTEND_GUIDE.md](https://github.com/kjelkols/imalink/blob/main/QT_FRONTEND_GUIDE.md)
+
+## Development
