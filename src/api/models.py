@@ -7,6 +7,18 @@ from typing import List, Optional
 
 
 @dataclass
+class ImportSession:
+    """Import session data model"""
+    id: int
+    imported_at: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    storage_location: Optional[str] = None
+    default_author_id: Optional[int] = None
+    images_count: int = 0
+
+
+@dataclass
 class Photo:
     """Photo data model matching API response"""
     hothash: str
@@ -32,11 +44,33 @@ class Photo:
     primary_filename: str = ""
     files: List[dict] = None
     
+    # Local storage information (simplified - folder is storage location)
+    import_folder: Optional[str] = None  # Folder from which file was imported (also storage location)
+    
+    # Coldpreview metadata
+    has_coldpreview: bool = False
+    coldpreview_width: Optional[int] = None
+    coldpreview_height: Optional[int] = None
+    coldpreview_size: Optional[int] = None  # File size in bytes
+    coldpreview_path: Optional[str] = None  # Backend storage path
+    
     def __post_init__(self):
         if self.tags is None:
             self.tags = []
         if self.files is None:
             self.files = []
+    
+    @property
+    def supports_coldpreview(self) -> bool:
+        """Check if this photo supports coldpreview functionality"""
+        return bool(self.hothash)  # Any photo with a hash can potentially have coldpreview
+    
+    @property
+    def coldpreview_dimensions(self) -> Optional[tuple]:
+        """Get coldpreview dimensions as (width, height) tuple or None"""
+        if self.coldpreview_width and self.coldpreview_height:
+            return (self.coldpreview_width, self.coldpreview_height)
+        return None
 
 
 @dataclass

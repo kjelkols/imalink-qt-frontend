@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction
 
 from .gallery_view import GalleryView
 from .import_dialog import ImportDialog
+from .import_view import ImportView
 from .stats_view import StatsView
 from ..api.client import ImaLinkClient
 import requests
@@ -137,6 +138,11 @@ class MainWindow(QMainWindow):
         self.gallery_view = GalleryView(self.api_client)
         self.tab_widget.addTab(self.gallery_view, "📸 Gallery")
         
+        # Import Dashboard tab
+        self.import_view = ImportView(self.api_client)
+        self.import_view.photos_imported.connect(self.on_photos_imported)
+        self.tab_widget.addTab(self.import_view, "📥 Import")
+        
         # Statistics tab
         self.stats_view = StatsView(self.api_client)
         self.tab_widget.addTab(self.stats_view, "📊 API Stats")
@@ -220,6 +226,12 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "About ImaLink", 
                          "ImaLink Photo Manager\nVersion 1.0.0\n\n"
                          "A Qt-based frontend for photo management.")
+    
+    def on_photos_imported(self):
+        """Handle photos imported signal from import view"""
+        # Refresh gallery to show newly imported photos
+        self.gallery_view.refresh()
+        self.statusBar().showMessage('✅ Photos imported - Gallery refreshed', 3000)
     
     def _show_api_status(self):
         """Show detailed API status information"""

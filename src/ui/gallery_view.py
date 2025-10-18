@@ -131,12 +131,22 @@ class GalleryView(QWidget):
         """Handle photos loaded from API"""
         self.photos = photos
         self.update_photo_grid()
-        self.status_label.setText(f"Loaded {len(photos)} photos")
+        
+        # Show appropriate status message
+        if len(photos) == 0:
+            self.status_label.setText("Ingen bilder i databasen")
+        else:
+            self.status_label.setText(f"Loaded {len(photos)} photos")
     
     def on_error(self, error_message):
         """Handle API error"""
         self.status_label.setText(f"Error: {error_message}")
-        QMessageBox.warning(self, "Error", f"Failed to load photos:\n{error_message}")
+        # Only show popup for actual errors, not empty results
+        if "connection" in error_message.lower() or "timeout" in error_message.lower() or "refused" in error_message.lower():
+            QMessageBox.warning(self, "Connection Error", f"Could not connect to backend:\n{error_message}")
+        else:
+            # For other errors, just show in status bar to avoid annoying popups
+            pass
     
     def update_photo_grid(self):
         """Update the photo grid with loaded photos"""
@@ -144,6 +154,36 @@ class GalleryView(QWidget):
         for widget in self.thumbnail_widgets:
             widget.setParent(None)
         self.thumbnail_widgets.clear()
+        
+        # Check if we have photos to display
+        if not self.photos:
+            # Determine appropriate empty state message
+            search_term = self.search_input.text().strip() if hasattr(self, 'search_input') else ""
+            min_rating = self.rating_spin.value() if hasattr(self, 'rating_spin') else 0
+            
+            if search_term or min_rating > 0:
+                # Empty search result
+                message = "🔍 Ingen bilder funnet\n\nPrøv å endre søkekriteriene"
+            else:
+                # Empty database
+                message = "📷 Ingen bilder i databasen\n\nBruk 'Import' menyen for å legge til bilder"
+            
+            # Show empty state message
+            empty_label = QLabel(message)
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_label.setStyleSheet("""
+                QLabel {
+                    color: #666;
+                    font-size: 16px;
+                    padding: 40px;
+                    border: 2px dashed #ccc;
+                    border-radius: 8px;
+                    background-color: #f9f9f9;
+                }
+            """)
+            self.grid_layout.addWidget(empty_label, 0, 0, 1, -1)  # Span all columns
+            self.thumbnail_widgets.append(empty_label)
+            return
         
         # Calculate grid dimensions
         columns = max(1, self.scroll_area.width() // 200)  # 200px per thumbnail
@@ -186,7 +226,12 @@ class GalleryView(QWidget):
             )
             self.photos = photos
             self.update_photo_grid()
-            self.status_label.setText(f"Found {len(photos)} photos")
+            
+            # Show appropriate search result message
+            if len(photos) == 0:
+                self.status_label.setText("Ingen bilder funnet med disse kriteriene")
+            else:
+                self.status_label.setText(f"Found {len(photos)} photos")
         except Exception as e:
             self.on_error(str(e))
     

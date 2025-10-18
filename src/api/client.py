@@ -9,7 +9,7 @@ from io import BytesIO
 from PIL import Image
 from pathlib import Path
 
-from .models import Photo, PaginatedResponse, PhotoSearchRequest, PhotoUpdateRequest
+from .models import Photo, PaginatedResponse, PhotoSearchRequest, PhotoUpdateRequest, ImportSession
 
 
 class ImaLinkClient:
@@ -193,3 +193,149 @@ class ImaLinkClient:
             "results": results,
             "error_details": errors
         }
+    
+    # === Coldpreview Methods ===
+    
+    def get_photo_coldpreview(self, hothash: str, width: int = None, height: int = None) -> bytes:
+        """Get photo coldpreview as JPEG bytes with optional resizing
+        
+        Args:
+            hothash: Photo hash identifier
+            width: Target width for resizing (optional, 100-2000px)
+            height: Target height for resizing (optional, 100-2000px)
+            
+        Returns:
+            JPEG image bytes
+            
+        Raises:
+            requests.HTTPError: If coldpreview not found (404) or other HTTP error
+        """
+        params = {}
+        if width:
+            params["width"] = width
+        if height:
+            params["height"] = height
+            
+        response = self.session.get(
+            f"{self.base_url}/photos/{hothash}/coldpreview",
+            params=params
+        )
+        response.raise_for_status()
+        return response.content
+    
+    def upload_photo_coldpreview(self, hothash: str, image_path: str) -> dict:
+        """Upload coldpreview for a photo
+        
+        Args:
+            hothash: Photo hash identifier
+            image_path: Path to image file to upload as coldpreview
+            
+        Returns:
+            Response with coldpreview metadata including width, height, size, path
+            
+        Raises:
+            requests.HTTPError: If upload fails
+            FileNotFoundError: If image file doesn't exist
+        """
+        image_path = Path(image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+        
+        with open(image_path, 'rb') as f:
+            # Proper multipart form data with explicit filename and content type
+            files = {
+                'file': (image_path.name, f, 'image/jpeg')
+            }
+            # Remove Content-Type header for multipart uploads
+            headers = {k: v for k, v in self.session.headers.items() 
+                      if k.lower() != 'content-type'}
+            response = self.session.put(
+                f"{self.base_url}/photos/{hothash}/coldpreview",
+                files=files,
+                headers=headers
+            )
+        response.raise_for_status()
+        return response.json()
+    
+    def delete_photo_coldpreview(self, hothash: str) -> dict:
+        """Delete coldpreview for a photo
+        
+        Args:
+            hothash: Photo hash identifier
+            
+        Returns:
+            Success response
+            
+        Raises:
+            requests.HTTPError: If deletion fails or coldpreview not found (404)
+        """
+        response = self.session.delete(
+            f"{self.base_url}/photos/{hothash}/coldpreview"
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    # === Import Session Methods ===
+    
+    def create_import_session(self, title: str = None, storage_location: str = None,
+                            description: str = None, default_author_id: int = None) -> ImportSession:
+        """Create a new import session
+        
+        Args:
+            title: User's title for this import (e.g., 'Italy Summer 2024')
+            storage_location: Where files are stored (e.g., '/home/user/photos/italy')
+            description: User's notes about this import
+            default_author_id: Default photographer for this batch
+            
+        Returns:
+            ImportSession object with id
+        """
+        payload = {}
+        if title:
+            payload["title"] = title
+        if storage_location:
+            payload["storage_location"] = storage_location
+        if description:
+            payload["description"] = description
+        if default_author_id:
+            payload["default_author_id"] = default_author_id
+        
+        response = self.session.post(
+            f"{self.base_url}/import_sessions/",
+            json=payload
+        )
+        response.raise_for_status()
+        return ImportSession(**response.json())
+    
+    def get_import_sessions(self, limit: int = 100, offset: int = 0) -> List[ImportSession]:
+        """Get list of import sessions
+        
+        Args:
+            limit: Maximum number of sessions to return (1-1000)
+            offset: Number of sessions to skip
+            
+        Returns:
+            List of ImportSession objects
+        """
+        response = self.session.get(
+            f"{self.base_url}/import_sessions/",
+            params={"limit": limit, "offset": offset}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return [ImportSession(**item) for item in data.get("sessions", [])]
+    
+    def get_import_session(self, import_id: int) -> ImportSession:
+        """Get a specific import session
+        
+        Args:
+            import_id: Import session ID
+            
+        Returns:
+            ImportSession object
+        """
+        response = self.session.get(
+            f"{self.base_url}/import_sessions/{import_id}"
+        )
+        response.raise_for_status()
+        return ImportSession(**response.json())

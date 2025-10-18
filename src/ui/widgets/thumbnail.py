@@ -11,20 +11,46 @@ from ...api.models import Photo
 
 
 class ThumbnailLoadWorker(QThread):
-    """Worker thread for loading thumbnail images"""
+    """Worker thread for loading thumbnail images with intelligent quality selection"""
     thumbnail_loaded = Signal(bytes)
     error_occurred = Signal(str)
     
-    def __init__(self, api_client, photo):
+    def __init__(self, api_client, photo, size_hint="thumbnail"):
         super().__init__()
         self.api_client = api_client
         self.photo = photo
+        self.size_hint = size_hint  # "thumbnail", "medium", or "large"
     
     def run(self):
         try:
-            # Use hotpreview data directly if available
+            if self.size_hint == "medium" and self.photo.supports_coldpreview:
+                # Try coldpreview first for medium-size displays
+                try:
+                    thumbnail_data = self.api_client.get_photo_coldpreview(
+                        self.photo.hothash, width=300, height=300
+                    )
+                    self.thumbnail_loaded.emit(thumbnail_data)
+                    return
+                except Exception:
+                    # Fall back to hotpreview if coldpreview fails
+                    pass
+            
+            elif self.size_hint == "large" and self.photo.supports_coldpreview:
+                # Try larger coldpreview for big displays
+                try:
+                    thumbnail_data = self.api_client.get_photo_coldpreview(
+                        self.photo.hothash, width=600, height=600
+                    )
+                    self.thumbnail_loaded.emit(thumbnail_data)
+                    return
+                except Exception:
+                    # Fall back to hotpreview if coldpreview fails
+                    pass
+            
+            # Default: Use hotpreview (always available)
             thumbnail_data = self.api_client.get_hotpreview_bytes(self.photo)
             self.thumbnail_loaded.emit(thumbnail_data)
+            
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -34,17 +60,31 @@ class ThumbnailWidget(QFrame):
     
     clicked = Signal(Photo)
     
-    def __init__(self, photo: Photo, api_client: ImaLinkClient):
+    def __init__(self, photo: Photo, api_client: ImaLinkClient, size_hint="thumbnail"):
         super().__init__()
         self.photo = photo
         self.api_client = api_client
+        self.size_hint = size_hint  # "thumbnail", "medium", or "large"
         
         self.init_ui()
         self.load_thumbnail()
     
     def init_ui(self):
         """Initialize the user interface"""
-        self.setFixedSize(180, 220)
+        # Adjust size based on size hint
+        if self.size_hint == "large":
+            self.setFixedSize(280, 320)
+            image_size = 270
+            max_height = 300
+        elif self.size_hint == "medium":
+            self.setFixedSize(220, 270)
+            image_size = 210
+            max_height = 250
+        else:  # thumbnail
+            self.setFixedSize(180, 220)
+            image_size = 170
+            max_height = 150
+        
         self.setFrameStyle(QFrame.Box)
         self.setLineWidth(1)
         self.setStyleSheet("""
@@ -66,7 +106,7 @@ class ThumbnailWidget(QFrame):
         
         # Thumbnail image
         self.image_label = QLabel()
-        self.image_label.setFixedSize(170, 150)
+        self.image_label.setFixedSize(image_size, max_height)
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("""
             QLabel {
@@ -76,6 +116,13 @@ class ThumbnailWidget(QFrame):
         """)
         self.image_label.setText("Loading...")
         layout.addWidget(self.image_label)
+        
+        # Quality indicator
+        if self.size_hint != "thumbnail":
+            self.quality_label = QLabel()
+            self.quality_label.setAlignment(Qt.AlignCenter)
+            self.quality_label.setStyleSheet("color: #888; font-size: 10px; font-style: italic;")
+            layout.addWidget(self.quality_label)
         
         # Title
         self.title_label = QLabel()
@@ -115,8 +162,8 @@ class ThumbnailWidget(QFrame):
     
     def load_thumbnail(self):
         """Load thumbnail image from API"""
-        # Load thumbnail in background thread
-        self.worker = ThumbnailLoadWorker(self.api_client, self.photo)
+        # Load thumbnail in background thread with appropriate quality
+        self.worker = ThumbnailLoadWorker(self.api_client, self.photo, self.size_hint)
         self.worker.thumbnail_loaded.connect(self.on_thumbnail_loaded)
         self.worker.error_occurred.connect(self.on_thumbnail_error)
         self.worker.start()
@@ -132,6 +179,13 @@ class ThumbnailWidget(QFrame):
                 Qt.SmoothTransformation
             )
             self.image_label.setPixmap(scaled_pixmap)
+            
+            # Show quality indicator for non-thumbnail sizes
+            if hasattr(self, 'quality_label'):
+                if self.size_hint == "medium":
+                    self.quality_label.setText("Medium Quality")
+                elif self.size_hint == "large":
+                    self.quality_label.setText("High Quality")
         else:
             self.image_label.setText("Invalid image")
     
@@ -139,6 +193,10 @@ class ThumbnailWidget(QFrame):
         """Handle thumbnail load error"""
         self.image_label.setText("Load error")
         self.image_label.setToolTip(f"Error loading thumbnail: {error_message}")
+        
+        # Show fallback indicator
+        if hasattr(self, 'quality_label'):
+            self.quality_label.setText("Using fallback quality")
     
     def mousePressEvent(self, event):
         """Handle mouse click"""
