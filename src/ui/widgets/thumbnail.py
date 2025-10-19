@@ -196,6 +196,133 @@ class ThumbnailWidget(QFrame):
         metadata_text = " • ".join(metadata_parts) if metadata_parts else ""
         self.metadata_label.setText(metadata_text)
         layout.addWidget(self.metadata_label)
+        
+        # Set up rich tooltip with metadata
+        self.setup_metadata_tooltip()
+    
+    def setup_metadata_tooltip(self):
+        """Setup a rich tooltip showing Photo fields + RAW exif_dict from server"""
+        import json
+        
+        tooltip_parts = []
+        
+        # Title
+        title = self.photo.primary_filename or self.photo.title or f"Photo {self.photo.hothash[:8]}"
+        tooltip_parts.append(f"<b>{title}</b>")
+        tooltip_parts.append("<hr>")
+        
+        # === Photo Model Fields (from server) ===
+        
+        # Date taken (from Photo model)
+        if self.photo.taken_at:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(self.photo.taken_at.replace('Z', '+00:00'))
+                date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                tooltip_parts.append(f"📅 <b>Taken:</b> {date_str}")
+            except:
+                tooltip_parts.append(f"📅 <b>Taken:</b> {self.photo.taken_at}")
+        else:
+            tooltip_parts.append(f"📅 <b>Taken:</b> None")
+        
+        # GPS coordinates (from Photo model - server extracted/converted)
+        if self.photo.gps_latitude is not None and self.photo.gps_longitude is not None:
+            tooltip_parts.append(f"🌍 <b>Latitude:</b> {self.photo.gps_latitude:.6f}°")
+            tooltip_parts.append(f"🌍 <b>Longitude:</b> {self.photo.gps_longitude:.6f}°")
+        else:
+            tooltip_parts.append(f"🌍 <b>Latitude:</b> None")
+            tooltip_parts.append(f"🌍 <b>Longitude:</b> None")
+        
+        # Import timestamp
+        if self.photo.first_imported:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(self.photo.first_imported.replace('Z', '+00:00'))
+                date_str = dt.strftime("%Y-%m-%d %H:%M")
+                tooltip_parts.append(f"📥 <b>Imported:</b> {date_str}")
+            except:
+                tooltip_parts.append(f"📥 <b>Imported:</b> {self.photo.first_imported}")
+        
+        # Location (text)
+        if self.photo.location:
+            tooltip_parts.append(f"📍 <b>Location:</b> {self.photo.location}")
+        
+        # Rating
+        if self.photo.rating and self.photo.rating > 0:
+            stars = "★" * self.photo.rating + "☆" * (5 - self.photo.rating)
+            tooltip_parts.append(f"⭐ <b>Rating:</b> {stars}")
+        
+        # Tags
+        if self.photo.tags and len(self.photo.tags) > 0:
+            tags_str = ", ".join(self.photo.tags)
+            tooltip_parts.append(f"🏷️ <b>Tags:</b> {tags_str}")
+        
+        # File info
+        if self.photo.file_size:
+            size_mb = self.photo.file_size / (1024 * 1024)
+            tooltip_parts.append(f"💾 <b>Size:</b> {size_mb:.2f} MB")
+        
+        # Image dimensions (from Photo model)
+        if self.photo.width and self.photo.height:
+            megapixels = (self.photo.width * self.photo.height) / 1_000_000
+            tooltip_parts.append(f"🖼️ <b>Dimensions:</b> {self.photo.width} × {self.photo.height} px ({megapixels:.1f} MP)")
+        
+        # hothash (for debugging)
+        if self.photo.hothash:
+            tooltip_parts.append(f"<small><i>ID: {self.photo.hothash[:16]}...</i></small>")
+        
+        # === RAW EXIF dictionary from server (NO FILTERING) ===
+        if hasattr(self.photo, 'exif') and self.photo.exif:
+            exif_dict = self.photo.exif
+            
+            # DEBUG: Print entire exif_dict to console
+            print(f"\n{'='*80}")
+            print(f"🔍 EXIF DATA DEBUG for: {title}")
+            print(f"{'='*80}")
+            print(f"Type of exif: {type(exif_dict)}")
+            print(f"Raw exif_dict from server:")
+            print(json.dumps(exif_dict, indent=2, default=str))
+            print(f"{'='*80}\n")
+            
+            if isinstance(exif_dict, dict) and len(exif_dict) > 0:
+                tooltip_parts.append("<br><hr>")
+                tooltip_parts.append("<b>📋 EXIF Data (raw from server):</b>")
+                tooltip_parts.append("<small>")
+                
+                def format_exif_value(value, indent=0):
+                    """Recursively format EXIF values - NO FILTERING"""
+                    indent_str = "&nbsp;" * (indent * 4)
+                    lines = []
+                    
+                    if isinstance(value, dict):
+                        for key, val in sorted(value.items()):  # Sort keys for readability
+                            if isinstance(val, dict):
+                                lines.append(f"{indent_str}<b>{key}:</b>")
+                                lines.extend(format_exif_value(val, indent + 1))
+                            elif isinstance(val, list):
+                                lines.append(f"{indent_str}<b>{key}:</b> [{', '.join(str(v) for v in val)}]")
+                            else:
+                                lines.append(f"{indent_str}<b>{key}:</b> {val}")
+                    elif isinstance(value, list):
+                        lines.append(f"{indent_str}[{', '.join(str(v) for v in value)}]")
+                    else:
+                        lines.append(f"{indent_str}{value}")
+                    
+                    return lines
+                
+                exif_lines = format_exif_value(exif_dict)
+                tooltip_parts.extend(exif_lines)
+                tooltip_parts.append("</small>")
+            else:
+                tooltip_parts.append("<br><i>No EXIF data available</i>")
+        else:
+            tooltip_parts.append("<br><i>No EXIF data available</i>")
+        
+        # Combine all parts
+        tooltip_html = "<br>".join(tooltip_parts)
+        
+        # Set tooltip on the entire widget
+        self.setToolTip(tooltip_html)
     
     def load_thumbnail(self):
         """Load thumbnail image from API"""

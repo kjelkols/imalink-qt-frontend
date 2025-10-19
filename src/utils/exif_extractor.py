@@ -7,6 +7,7 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from typing import Dict, Optional, Any
 from datetime import datetime
+from pathlib import Path
 
 
 def dms_to_decimal(dms_tuple, hemisphere: str) -> Optional[float]:
@@ -36,28 +37,25 @@ def dms_to_decimal(dms_tuple, hemisphere: str) -> Optional[float]:
         return None
 
 
-def standardize_datetime(exif_date: str) -> Optional[str]:
+def standardize_datetime(dt_str: str) -> str:
     """
-    Standardize EXIF datetime to "YYYY-MM-DD HH:MM:SS" format.
-    
-    Args:
-        exif_date: Date string from EXIF (e.g., "2025:01:12 17:11:26")
-        
-    Returns:
-        Standardized date string or None
+    Convert EXIF datetime to ISO 8601 format.
+    EXIF format: "2021:02:11 14:30:24"
+    Output format: "2021-02-11T14:30:24Z" (ISO 8601)
     """
-    if not exif_date:
+    if not dt_str:
         return None
     
     try:
-        # Convert EXIF format "2025:01:12 17:11:26" to "2025-01-12 17:11:26"
-        standardized = exif_date.replace(':', '-', 2)
-        
-        # Validate format
-        datetime.strptime(standardized, "%Y-%m-%d %H:%M:%S")
-        
-        return standardized
-    except (ValueError, AttributeError):
+        # EXIF uses colons in date part: "2021:02:11 14:30:24"
+        # Convert to ISO 8601: "2021-02-11T14:30:24Z"
+        parts = dt_str.split()
+        if len(parts) == 2:
+            date_part = parts[0].replace(":", "-")  # "2021-02-11"
+            time_part = parts[1]  # "14:30:24"
+            return f"{date_part}T{time_part}Z"
+        return None
+    except Exception:
         return None
 
 
@@ -107,17 +105,170 @@ def extract_gps(gps_data: Dict[int, Any]) -> Optional[Dict[str, float]]:
     return result if result else None
 
 
-def extract_exif_dict(image_path: str) -> Dict[str, Any]:
+def extract_taken_at(image_path: Path) -> Optional[str]:
     """
-    Extract EXIF metadata from image and convert to ImaLink JSON format.
+    Extract the photo taken timestamp from EXIF data.
+    Returns ISO 8601 format: "2021-02-11T14:30:24Z"
+    Returns None if no timestamp found.
+    """
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+            if not exif:
+                return None
+            
+            # Try DateTimeOriginal first (when photo was taken)
+            date_original = exif.get(36867)  # DateTimeOriginal
+            if date_original:
+                return standardize_datetime(str(date_original))
+            
+            # Fallback to DateTime
+            date_time = exif.get(306)  # DateTime
+            if date_time:
+                return standardize_datetime(str(date_time))
+            
+            # Try ExifOffset IFD
+            try:
+                exif_ifd = exif.get_ifd(0x8769)
+                if exif_ifd:
+                    date_original = exif_ifd.get(36867)  # DateTimeOriginal
+                    if date_original:
+                        return standardize_datetime(str(date_original))
+                    
+                    date_digitized = exif_ifd.get(36868)  # DateTimeDigitized
+                    if date_digitized:
+                        return standardize_datetime(str(date_digitized))
+            except:
+                pass
+            
+    except Exception as e:
+        print(f"Warning: Failed to extract taken_at from {image_path}: {e}")
+    
+    return None
+
+
+def extract_gps_coordinates(image_path: str) -> tuple[Optional[float], Optional[float]]:
+    """
+    Extract GPS latitude and longitude from image EXIF.
     
     Args:
         image_path: Path to image file
         
     Returns:
-        Dictionary with standardized EXIF data
+        Tuple of (latitude, longitude) or (None, None)
+    """
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+            if not exif:
+                return None, None
+            
+            # Try to get GPS IFD
+            try:
+                gps_ifd = exif.get_ifd(0x8825)  # GPSInfo
+                if gps_ifd:
+                    gps_data = extract_gps(gps_ifd)
+                    if gps_data:
+                        return gps_data.get('latitude'), gps_data.get('longitude')
+            except:
+                pass
+            
+    except Exception as e:
+        print(f"Warning: Failed to extract GPS from {image_path}: {e}")
+    
+    return None, None
+
+
+def extract_exif_dict(image_path: str) -> Dict[str, Any]:
+    """
+    Extract useful EXIF metadata from image and convert to JSON format.
+    
+    Priority strategy:
+    1. Date/time information (CRITICAL for chronological organization)
+    2. GPS location data (CRITICAL for mapping)
+    3. Camera settings (ISO, aperture, shutter, focal length) (HIGH value)
+    4. Camera/lens identification (MEDIUM value)
+    5. Image technical details (dimensions, color space) (LOW value)
+    
+    Excluded: MakerNote, UserComment, binary blobs, and other bloat
+    
+    Args:
+        image_path: Path to image file
+        
+    Returns:
+        Dictionary with curated EXIF data
     """
     exif_dict = {}
+    
+    # Define which tags we want to extract (by tag name)
+    USEFUL_TAGS = {
+        # === PRIORITY 1: Date/Time (CRITICAL) ===
+        'DateTime',
+        'DateTimeOriginal',      # When photo was taken
+        'DateTimeDigitized',     # When photo was digitized
+        'SubsecTime',
+        'SubsecTimeOriginal',
+        'SubsecTimeDigitized',
+        'OffsetTime',
+        'OffsetTimeOriginal',
+        'OffsetTimeDigitized',
+        
+        # === PRIORITY 2: Camera Settings (HIGH) ===
+        'ISOSpeedRatings',       # ISO sensitivity
+        'FNumber',               # Aperture (f-stop)
+        'ExposureTime',          # Shutter speed
+        'FocalLength',           # Lens focal length
+        'FocalLengthIn35mmFilm', # Equivalent focal length
+        'ExposureBiasValue',     # Exposure compensation
+        'ExposureProgram',       # Auto/Manual/Aperture priority, etc.
+        'MeteringMode',          # How camera metered exposure
+        'Flash',                 # Flash fired/not fired
+        'WhiteBalance',          # Auto/Manual white balance
+        'LightSource',           # Light source type
+        'ExposureMode',          # Auto/Manual exposure
+        'SceneCaptureType',      # Landscape/Portrait/Night, etc.
+        'DigitalZoomRatio',      # Digital zoom ratio
+        'GainControl',           # Gain control
+        'Contrast',              # Contrast setting
+        'Saturation',            # Saturation setting
+        'Sharpness',             # Sharpness setting
+        
+        # === PRIORITY 3: Camera/Lens Info (MEDIUM) ===
+        'Make',                  # Camera manufacturer
+        'Model',                 # Camera model
+        'LensModel',             # Lens model
+        'LensMake',              # Lens manufacturer
+        'LensSpecification',     # Lens specifications
+        'SerialNumber',          # Camera serial number
+        'BodySerialNumber',      # Body serial number
+        'LensSerialNumber',      # Lens serial number
+        'Software',              # Firmware version
+        
+        # === PRIORITY 4: Image Technical (LOW) ===
+        'ExifImageWidth',        # Image width in pixels
+        'ExifImageHeight',       # Image height in pixels
+        'Orientation',           # Image orientation
+        'ColorSpace',            # Color space (sRGB, Adobe RGB)
+        'PixelXDimension',       # Pixel X dimension
+        'PixelYDimension',       # Pixel Y dimension
+        'ResolutionUnit',        # Resolution unit
+        'XResolution',           # X resolution
+        'YResolution',           # Y resolution
+        'YCbCrPositioning',      # YCbCr positioning
+        'ComponentsConfiguration',
+        'CompressedBitsPerPixel',
+        'SensingMethod',         # Sensor type
+        'FileSource',            # File source
+        'SceneType',             # Scene type
+        'CustomRendered',        # Custom rendered
+        'MaxApertureValue',      # Max aperture
+        'SubjectDistanceRange',  # Subject distance range
+        
+        # Metadata
+        'Artist',                # Photographer name
+        'Copyright',             # Copyright information
+        'ImageDescription',      # Image description
+    }
     
     try:
         with Image.open(image_path) as img:
@@ -126,140 +277,112 @@ def extract_exif_dict(image_path: str) -> Dict[str, Any]:
             if not exif:
                 return {}
             
-            # Priority 1: Date taken
-            date_original = exif.get(36867)  # DateTimeOriginal
-            if not date_original:
-                date_original = exif.get(306)  # DateTime as fallback
-            
-            if date_original:
-                standardized_date = standardize_datetime(str(date_original))
-                if standardized_date:
-                    exif_dict['date_taken'] = standardized_date
-            
-            # Priority 1: GPS coordinates
-            gps_info = None
+            # Extract useful main EXIF tags
             for tag_id in exif:
-                tag = TAGS.get(tag_id, tag_id)
-                if tag == "GPSInfo":
-                    gps_info = exif[tag_id]
-                    break
+                try:
+                    tag_name = TAGS.get(tag_id, f"Unknown_{tag_id}")
+                    
+                    # Skip IFD pointers and unwanted tags
+                    if tag_name in ["GPSInfo", "ExifOffset", "MakerNote", "UserComment", "ExifInteroperabilityOffset"]:
+                        continue
+                    
+                    # Only include tags in our useful list
+                    if tag_name in USEFUL_TAGS:
+                        value = exif.get(tag_id)
+                        exif_dict[tag_name] = _serialize_value(value)
+                        
+                except Exception as e:
+                    continue
             
-            if gps_info:
-                gps_data = extract_gps(gps_info)
-                if gps_data:
-                    exif_dict['gps'] = gps_data
+            # Extract ExifOffset IFD (detailed EXIF data)
+            try:
+                exif_ifd = exif.get_ifd(0x8769)
+                if exif_ifd:
+                    for tag_id, value in exif_ifd.items():
+                        try:
+                            tag_name = TAGS.get(tag_id, f"Exif_{tag_id}")
+                            
+                            # Skip bloat
+                            if tag_name in ["MakerNote", "UserComment", "ExifInteroperabilityOffset"]:
+                                continue
+                            
+                            # Only include useful tags
+                            if tag_name in USEFUL_TAGS:
+                                exif_dict[tag_name] = _serialize_value(value)
+                        except:
+                            continue
+            except:
+                pass
             
-            # Priority 1: Image dimensions
-            width = exif.get(256) or exif.get(40962)  # ImageWidth or PixelXDimension
-            height = exif.get(257) or exif.get(40963)  # ImageLength or PixelYDimension
-            
-            if width or height:
-                image_info = {}
-                if width:
-                    image_info['width'] = int(width)
-                if height:
-                    image_info['height'] = int(height)
-                
-                # Optional: Orientation
-                orientation = exif.get(274)
-                if orientation:
-                    image_info['orientation'] = int(orientation)
-                
-                # Optional: Color space
-                color_space = exif.get(40961)
-                if color_space == 1:
-                    image_info['color_space'] = 'sRGB'
-                elif color_space == 2:
-                    image_info['color_space'] = 'Adobe RGB'
-                
-                exif_dict['image_info'] = image_info
-            
-            # Priority 2: Exposure settings
-            exposure = {}
-            
-            # ISO
-            iso = exif.get(34855)
-            if iso:
-                exposure['iso'] = int(iso) if isinstance(iso, (int, float)) else int(iso[0]) if isinstance(iso, (list, tuple)) else None
-            
-            # F-number (aperture)
-            f_number = exif.get(33437)
-            if f_number:
-                exposure['f_number'] = float(f_number)
-            
-            # Shutter speed
-            exposure_time = exif.get(33434)
-            if exposure_time:
-                if isinstance(exposure_time, tuple) and len(exposure_time) == 2:
-                    num, denom = exposure_time
-                    if denom != 0:
-                        exposure['shutter_speed'] = f"{num}/{denom}" if num < denom else f"{num/denom}s"
-                else:
-                    exposure['shutter_speed'] = str(exposure_time)
-            
-            # Focal length
-            focal_length = exif.get(37386)
-            if focal_length:
-                exposure['focal_length'] = float(focal_length)
-            
-            # Flash
-            flash = exif.get(37385)
-            if flash is not None:
-                exposure['flash'] = bool(flash & 0x01)  # Bit 0 indicates if flash fired
-            
-            # Exposure compensation
-            exp_comp = exif.get(37380)
-            if exp_comp:
-                exposure['exposure_compensation'] = float(exp_comp)
-            
-            # Exposure mode
-            exp_mode = exif.get(34850)
-            if exp_mode is not None:
-                mode_map = {0: 'Auto', 1: 'Manual', 2: 'Auto Bracket'}
-                exposure['exposure_mode'] = mode_map.get(exp_mode, str(exp_mode))
-            
-            # Metering mode
-            metering = exif.get(37383)
-            if metering is not None:
-                metering_map = {
-                    0: 'Unknown', 1: 'Average', 2: 'Center-weighted', 
-                    3: 'Spot', 4: 'Multi-spot', 5: 'Matrix', 6: 'Partial'
-                }
-                exposure['metering_mode'] = metering_map.get(metering, str(metering))
-            
-            # White balance
-            wb = exif.get(37384)
-            if wb is not None:
-                wb_map = {0: 'Auto', 1: 'Manual'}
-                exposure['white_balance'] = wb_map.get(wb, str(wb))
-            
-            if exposure:
-                exif_dict['exposure'] = exposure
-            
-            # Priority 3: Camera information
-            camera = {}
-            
-            make = exif.get(271)
-            if make:
-                camera['make'] = str(make).strip()
-            
-            model = exif.get(272)
-            if model:
-                camera['model'] = str(model).strip()
-            
-            lens_model = exif.get(42036)
-            if lens_model:
-                camera['lens_model'] = str(lens_model).strip()
-            
-            serial = exif.get(42033)
-            if serial:
-                camera['serial_number'] = str(serial).strip()
-            
-            if camera:
-                exif_dict['camera'] = camera
+            # Extract GPS IFD (CRITICAL - Priority 2)
+            try:
+                gps_ifd = exif.get_ifd(0x8825)
+                if gps_ifd:
+                    gps_data = {}
+                    for gps_tag_id, gps_value in gps_ifd.items():
+                        gps_tag_name = GPSTAGS.get(gps_tag_id, f"GPS_{gps_tag_id}")
+                        gps_data[gps_tag_name] = _serialize_value(gps_value)
+                    if gps_data:
+                        exif_dict["GPSInfo"] = gps_data
+            except:
+                pass
     
     except Exception as e:
-        # Graceful degradation - return whatever we extracted so far
         print(f"Warning: EXIF extraction partially failed for {image_path}: {e}")
     
     return exif_dict
+
+
+def _serialize_value(value: Any) -> Any:
+    """
+    Convert EXIF values to JSON-serializable format.
+    
+    Args:
+        value: EXIF value (can be int, float, str, tuple, bytes, etc.)
+        
+    Returns:
+        JSON-serializable value
+    """
+    # Handle bytes
+    if isinstance(value, bytes):
+        try:
+            # Try to decode as UTF-8 string
+            return value.decode('utf-8', errors='ignore').strip('\x00')
+        except:
+            # If that fails, convert to hex string
+            return value.hex()
+    
+    # Handle tuples (e.g., rational numbers)
+    elif isinstance(value, tuple):
+        if len(value) == 2 and all(isinstance(x, int) for x in value):
+            # Rational number (numerator/denominator)
+            num, denom = value
+            if denom != 0:
+                return float(num / denom)
+            return num
+        else:
+            # Regular tuple - convert to list
+            return [_serialize_value(v) for v in value]
+    
+    # Handle lists
+    elif isinstance(value, list):
+        return [_serialize_value(v) for v in value]
+    
+    # Handle strings
+    elif isinstance(value, str):
+        return value.strip('\x00')
+    
+    # Handle numbers and booleans (already serializable)
+    elif isinstance(value, (int, float, bool)):
+        return value
+    
+    # Handle None
+    elif value is None:
+        return None
+    
+    # Fallback: convert to string
+    else:
+        try:
+            return str(value)
+        except:
+            return None

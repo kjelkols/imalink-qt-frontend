@@ -2,7 +2,7 @@
 Data models for API communication
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 
@@ -56,7 +56,7 @@ class Photo:
     gps_longitude: Optional[float] = None
     title: Optional[str] = None
     description: Optional[str] = None
-    tags: List[str] = None
+    tags: List[str] = field(default_factory=list)
     rating: int = 0
     location: Optional[str] = None  # Added missing location field
     created_at: str = ""
@@ -70,7 +70,10 @@ class Photo:
     has_gps: bool = False
     has_raw_companion: bool = False
     primary_filename: str = ""
-    files: List[dict] = None
+    file_size: Optional[int] = None  # Total file size in bytes
+    files: List[dict] = field(default_factory=list)
+    exif: Optional[dict] = None  # EXIF metadata dictionary
+    exif_dict: Optional[dict] = None  # EXIF metadata (backend alias for exif)
     
     # Backend metadata fields (not used by frontend - backend sends actual images via endpoints)
     # These exist to accept backend response, but frontend should use try-and-fetch pattern
@@ -80,10 +83,11 @@ class Photo:
     coldpreview_size: Optional[int] = None  # Backend metadata (ignored by frontend)
     
     def __post_init__(self):
-        if self.tags is None:
-            self.tags = []
-        if self.files is None:
-            self.files = []
+        """Handle backend's exif_dict alias"""
+        # If backend sends exif_dict, copy to exif for consistency
+        if self.exif_dict and not self.exif:
+            self.exif = self.exif_dict
+
     
 @dataclass
 class Author:

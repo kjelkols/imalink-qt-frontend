@@ -198,8 +198,21 @@ class ImaLinkClient:
         return Photo(**response.json())
     
     def import_image(self, file_path: str, session_id: int = None) -> dict:
-        """Import a single image file with EXIF metadata extraction"""
-        from ..utils.exif_extractor import extract_exif_dict
+        """Import a single image file with EXIF metadata extraction
+        
+        Extracts and sends:
+        - taken_at: Timestamp when photo was taken (from EXIF)
+        - gps_latitude: GPS latitude in decimal degrees (from EXIF)
+        - gps_longitude: GPS longitude in decimal degrees (from EXIF)
+        - exif_dict: Complete EXIF metadata dictionary
+        
+        Backend stores these as separate fields for easy querying.
+        """
+        from ..utils.exif_extractor import (
+            extract_exif_dict, 
+            extract_taken_at, 
+            extract_gps_coordinates
+        )
         
         path = Path(file_path)
         
@@ -209,17 +222,43 @@ class ImaLinkClient:
         # Extract EXIF metadata as JSON
         exif_dict = extract_exif_dict(file_path)
         
+        # Extract critical fields that backend needs directly
+        taken_at = extract_taken_at(file_path)
+        gps_latitude, gps_longitude = extract_gps_coordinates(file_path)
+        
         # Prepare payload
         payload = {
             "filename": path.name,
             "file_size": path.stat().st_size,
             "file_path": str(path.absolute()),
             "hotpreview": hotpreview_b64,
-            "exif_dict": exif_dict  # Send EXIF as JSON instead of binary
+            "exif_dict": exif_dict,  # Complete EXIF dictionary for display
         }
+        
+        # Add taken_at in ISO 8601 format (required by backend)
+        if taken_at:
+            payload["taken_at"] = taken_at  # Already in ISO 8601 from extract_taken_at()
+        
+        # Add GPS coordinates as decimal degrees (required by backend)
+        if gps_latitude is not None and gps_longitude is not None:
+            payload["gps_latitude"] = gps_latitude
+            payload["gps_longitude"] = gps_longitude
         
         if session_id:
             payload["import_session_id"] = session_id
+        
+        # Debug logging
+        print(f"\n{'='*60}")
+        print(f"📤 Sending to backend: {path.name}")
+        print(f"{'='*60}")
+        print(f"  filename: {payload['filename']}")
+        print(f"  file_size: {payload['file_size']}")
+        print(f"  taken_at: {payload.get('taken_at', 'NOT SENT')}")
+        print(f"  gps_latitude: {payload.get('gps_latitude', 'NOT SENT')}")
+        print(f"  gps_longitude: {payload.get('gps_longitude', 'NOT SENT')}")
+        print(f"  exif_dict fields: {len(exif_dict)}")
+        print(f"  hotpreview length: {len(hotpreview_b64)}")
+        print(f"{'='*60}\n")
         
         response = self.session.post(
             f"{self.base_url}/image-files/",
@@ -418,133 +457,3 @@ class ImaLinkClient:
         )
         response.raise_for_status()
         return ImportSession(**response.json())
-    
-    # === FileStorage Methods (DEPRECATED - Use LocalStorageManager instead) ===
-    # These methods are kept for reference but should not be used by the frontend.
-    # Storage locations are now managed locally using src/storage/local_storage_manager.py
-    
-    def register_file_storage(self, base_path: str, display_name: str, 
-                            description: str = None) -> FileStorage:
-        """Create a new file storage location
-        
-        Backend generates both UUID and directory_name automatically.
-        Frontend receives the generated names and creates physical directory accordingly.
-        
-        Args:
-            base_path: Parent directory where storage folder will be created
-            display_name: User-friendly name for the storage
-            description: Optional notes about this storage
-            
-        Returns:
-            FileStorage object with backend-generated UUID and directory_name
-        """
-        payload = {
-            "base_path": base_path,
-            "display_name": display_name
-        }
-        if description:
-            payload["description"] = description
-        
-        response = self.session.post(
-            f"{self.base_url}/file-storage/",
-            json=payload
-        )
-        response.raise_for_status()
-        
-        # Handle response wrapper
-        data = response.json()
-        if "data" in data:
-            return FileStorage(**data["data"])
-        return FileStorage(**data)
-    
-    def get_file_storages(self) -> List[FileStorage]:
-        """Get all registered file storage locations
-        
-        Returns:
-            List of FileStorage objects
-        """
-        response = self.session.get(f"{self.base_url}/file-storage/")
-        response.raise_for_status()
-        data = response.json()
-        
-        # Handle response wrapper: {"success": true, "data": {"storages": [...], "total_count": N}}
-        if "data" in data and "storages" in data["data"]:
-            return [FileStorage(**item) for item in data["data"]["storages"]]
-        elif isinstance(data, list):
-            return [FileStorage(**item) for item in data]
-        elif "storages" in data:
-            return [FileStorage(**item) for item in data["storages"]]
-        elif "items" in data:
-            return [FileStorage(**item) for item in data["items"]]
-        else:
-            return []
-    
-    def get_file_storage(self, storage_uuid: str) -> FileStorage:
-        """Get specific file storage by UUID
-        
-        Args:
-            storage_uuid: Storage identifier
-            
-        Returns:
-            FileStorage object
-        """
-        response = self.session.get(
-            f"{self.base_url}/file-storage/{storage_uuid}"
-        )
-        response.raise_for_status()
-        
-        # Handle response wrapper
-        data = response.json()
-        if "data" in data:
-            return FileStorage(**data["data"])
-        return FileStorage(**data)
-    
-    def update_file_storage(self, storage_uuid: str, display_name: str = None,
-                          description: str = None) -> FileStorage:
-        """Update file storage metadata (only display_name and description allowed)
-        
-        Note: Backend returns only updated fields. This method fetches the full
-        object after update to return complete FileStorage.
-        
-        Args:
-            storage_uuid: Storage identifier
-            display_name: New display name (optional)
-            description: New description (optional)
-            
-        Returns:
-            Updated FileStorage object (refetched to get all fields)
-        """
-        payload = {}
-        if display_name is not None:
-            payload["display_name"] = display_name
-        if description is not None:
-            payload["description"] = description
-        
-        response = self.session.put(
-            f"{self.base_url}/file-storage/{storage_uuid}",
-            json=payload
-        )
-        response.raise_for_status()
-        
-        # Backend returns partial data, fetch complete object
-        return self.get_file_storage(storage_uuid)
-    
-    def delete_file_storage(self, storage_uuid: str) -> dict:
-        """Delete file storage record (permanent)
-        
-        Args:
-            storage_uuid: Storage identifier
-            
-        Returns:
-            Success response or empty dict for 204 No Content
-        """
-        response = self.session.delete(
-            f"{self.base_url}/file-storage/{storage_uuid}"
-        )
-        response.raise_for_status()
-        
-        # 204 No Content returns empty body
-        if response.status_code == 204:
-            return {"success": True}
-        
-        return response.json()

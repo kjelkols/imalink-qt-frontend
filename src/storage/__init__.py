@@ -2,7 +2,6 @@
 Storage management module
 """
 
-from .import_tracker import ImportFolderTracker
-from .local_manager import LocalStorageManager
+from .simple_storage import SimpleStorageManager
 
-__all__ = ['ImportFolderTracker', 'LocalStorageManager']
+__all__ = ['SimpleStorageManager']

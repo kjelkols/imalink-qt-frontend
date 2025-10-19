@@ -41,22 +41,6 @@ class StatsLoadWorker(QThread):
             except:
                 stats["photos"] = "N/A"
             
-            # Count file storages via API
-            try:
-                storage_response = requests.get(f"{self.api_client.base_url}/file-storage/", timeout=5)
-                if storage_response.status_code == 200:
-                    storage_data = storage_response.json()
-                    if "data" in storage_data and "total_count" in storage_data["data"]:
-                        stats["file_storages"] = storage_data["data"]["total_count"]
-                    elif "data" in storage_data and "storages" in storage_data["data"]:
-                        stats["file_storages"] = len(storage_data["data"]["storages"])
-                    else:
-                        stats["file_storages"] = "N/A"
-                else:
-                    stats["file_storages"] = "N/A"
-            except:
-                stats["file_storages"] = "N/A"
-            
             # Get server info (not database details) via debug endpoint if available
             try:
                 debug_response = requests.get(f"{self.api_client.base_url}/debug/database-stats", timeout=5)
