@@ -129,14 +129,20 @@ class GalleryView(QWidget):
     
     def on_photos_loaded(self, photos):
         """Handle photos loaded from API"""
-        self.photos = photos
+        # Sort photos by date (prefer taken_at, fallback to first_imported, then created_at)
+        # Newest first
+        def get_sort_date(p):
+            return p.taken_at or p.first_imported or p.created_at or "0000-00-00"
+        
+        photos_sorted = sorted(photos, key=get_sort_date, reverse=True)
+        self.photos = photos_sorted
         self.update_photo_grid()
         
         # Show appropriate status message
         if len(photos) == 0:
             self.status_label.setText("Ingen bilder i databasen")
         else:
-            self.status_label.setText(f"Loaded {len(photos)} photos")
+            self.status_label.setText(f"Loaded {len(photos)} photos (sorted by date)")
     
     def on_error(self, error_message):
         """Handle API error"""

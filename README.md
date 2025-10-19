@@ -4,12 +4,28 @@ A Qt-based desktop frontend for the ImaLink photo management system.
 
 ## Features
 
-- Browse photo gallery with thumbnails
-- Import images from local filesystem
-- Search and filter photos by metadata
-- View photo details and metadata
-- Tag management
-- Rating system
+- 📸 Browse photo gallery with thumbnails
+- 📥 Import images from local filesystem with EXIF extraction
+- 🔍 Search and filter photos by metadata
+- 🖼️ View photo details with zoom and pan
+- 🏷️ Tag management
+- ⭐ Rating system
+- 📦 Local storage management (no backend dependency)
+- 🔄 Independent photo viewer windows
+
+## Storage Architecture
+
+ImaLink uses a **hybrid storage architecture**:
+- **Backend**: Manages photo metadata only (titles, ratings, tags, EXIF)
+- **Frontend**: Manages storage locations locally using `~/.imalink/storage_config.json`
+
+This means:
+- ✅ Backend is storage-agnostic (no FileStorage API needed)
+- ✅ Frontend controls where files are stored
+- ✅ Easy to add/remove/relocate storage locations
+- ✅ Support for external drives and network storage
+
+See [`STORAGE_ARCHITECTURE.md`](STORAGE_ARCHITECTURE.md) for details.
 
 ## Development Environment
 
@@ -86,8 +102,14 @@ The application connects to the backend API at `http://localhost:8000/api/v1` by
 
 **⚠️ IMPORTANT: Read `DEVELOPMENT.md` first for critical development information!**
 
-For comprehensive documentation, see the main backend repository:
-- **API Reference**: [Backend Repository - API_REFERENCE.md](https://github.com/kjelkols/imalink/blob/main/API_REFERENCE.md)
-- **Qt Frontend Development Guide**: [Backend Repository - QT_FRONTEND_GUIDE.md](https://github.com/kjelkols/imalink/blob/main/QT_FRONTEND_GUIDE.md)
+### Local Documentation
+- **Storage Architecture**: [`STORAGE_ARCHITECTURE.md`](STORAGE_ARCHITECTURE.md) - How frontend manages storage locations
+- **API Reference**: [`API_REFERENCE.md`](API_REFERENCE.md) - Backend API endpoints (FileStorage deprecated)
+- **Import Storage Integration**: [`IMPORT_STORAGE_INTEGRATION.md`](IMPORT_STORAGE_INTEGRATION.md) - Import workflow
+
+### Backend Documentation
+For comprehensive backend documentation, see:
+- **Backend API Reference**: [Backend Repository - API_REFERENCE.md](https://github.com/kjelkols/imalink/blob/main/API_REFERENCE.md)
+- **EXIF Extraction Guide**: [Backend Repository - FRONTEND_EXIF_EXTRACTION_GUIDE.md](https://github.com/kjelkols/imalink/blob/main/docs/FRONTEND_EXIF_EXTRACTION_GUIDE.md)
 
 ## Development

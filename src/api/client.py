@@ -198,18 +198,24 @@ class ImaLinkClient:
         return Photo(**response.json())
     
     def import_image(self, file_path: str, session_id: int = None) -> dict:
-        """Import a single image file"""
+        """Import a single image file with EXIF metadata extraction"""
+        from ..utils.exif_extractor import extract_exif_dict
+        
         path = Path(file_path)
         
         # Generate hotpreview and hothash using shared function
         _, hotpreview_b64, hothash = generate_hotpreview_and_hash(file_path)
+        
+        # Extract EXIF metadata as JSON
+        exif_dict = extract_exif_dict(file_path)
         
         # Prepare payload
         payload = {
             "filename": path.name,
             "file_size": path.stat().st_size,
             "file_path": str(path.absolute()),
-            "hotpreview": hotpreview_b64
+            "hotpreview": hotpreview_b64,
+            "exif_dict": exif_dict  # Send EXIF as JSON instead of binary
         }
         
         if session_id:
@@ -413,7 +419,9 @@ class ImaLinkClient:
         response.raise_for_status()
         return ImportSession(**response.json())
     
-    # === FileStorage Methods (Simplified API) ===
+    # === FileStorage Methods (DEPRECATED - Use LocalStorageManager instead) ===
+    # These methods are kept for reference but should not be used by the frontend.
+    # Storage locations are now managed locally using src/storage/local_storage_manager.py
     
     def register_file_storage(self, base_path: str, display_name: str, 
                             description: str = None) -> FileStorage:

@@ -70,6 +70,10 @@ class ZoomableImageLabel(QLabel):
 class PhotoDetailDialog(QMainWindow):
     """Independent window for viewing photos (with native OS frame and controls)"""
     
+    # Class variable to track window positions for cascade effect
+    _window_count = 0
+    _cascade_offset = 40  # Pixels to offset each new window
+    
     def __init__(self, photo: Photo, api_client: ImaLinkClient, parent=None):
         super().__init__(parent)
         self.photo = photo
@@ -81,6 +85,11 @@ class PhotoDetailDialog(QMainWindow):
         
         self.init_ui()
         self.load_photo_data()
+    
+    def closeEvent(self, event):
+        """Reset window count when window closes"""
+        PhotoDetailDialog._window_count = max(0, PhotoDetailDialog._window_count - 1)
+        super().closeEvent(event)
     
     def resizeEvent(self, event):
         """Handle window resize - update preview display"""
@@ -106,17 +115,36 @@ class PhotoDetailDialog(QMainWindow):
         filename = self.photo.primary_filename or self.photo.hothash[:12]
         self.setWindowTitle(f"Photo Viewer - {filename}")
         
-        # Set large default size (90% of screen) but keep window frame visible
+        # Set default size (70% width, 75% height) - smaller for multiple windows
         from PySide6.QtWidgets import QApplication
         screen = QApplication.primaryScreen().geometry()
-        width = int(screen.width() * 0.9)
-        height = int(screen.height() * 0.9)
+        width = int(screen.width() * 0.7)
+        height = int(screen.height() * 0.75)
         self.resize(width, height)
         
-        # Center window on screen
-        x = (screen.width() - width) // 2
-        y = (screen.height() - height) // 2
+        # Calculate cascade position
+        offset = PhotoDetailDialog._window_count * PhotoDetailDialog._cascade_offset
+        
+        # Start position (top-left with margin)
+        start_x = 50
+        start_y = 50
+        
+        # Calculate maximum offset before going off screen
+        max_offset_x = screen.width() - width - 100  # 100px margin from right edge
+        max_offset_y = screen.height() - height - 100  # 100px margin from bottom edge
+        
+        # Reset to top-left if we would go off screen
+        if start_x + offset > max_offset_x or start_y + offset > max_offset_y:
+            PhotoDetailDialog._window_count = 0
+            offset = 0
+        
+        # Position window with cascade offset
+        x = start_x + offset
+        y = start_y + offset
         self.move(x, y)
+        
+        # Increment window count for next window
+        PhotoDetailDialog._window_count += 1
         
         # Create central widget (QMainWindow requires this)
         central_widget = QWidget()

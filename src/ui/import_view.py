@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 import time
 from typing import List
-from ..storage.import_tracker import ImportFolderTracker
+from ..storage.local_storage_manager import LocalStorageManager
 from ..api.client import generate_hotpreview_and_hash
 
 
@@ -29,7 +29,7 @@ class ImportSessionWorker(QThread):
         self.session_id = session_id
         self.storage_uuid = storage_uuid  # Storage UUID for this import
         self.storage_path = Path(storage_path) if storage_path else None  # Physical path to storage
-        self.folder_tracker = ImportFolderTracker(api_client)
+        self.storage_manager = LocalStorageManager()  # Use local storage manager
     
     def run(self):
         try:
@@ -154,8 +154,8 @@ class ImportView(QWidget):
         super().__init__(parent)
         self.api_client = api_client
         self.current_worker = None
-        self.folder_tracker = ImportFolderTracker(api_client)  # Pass API client
-        self.available_storages = []  # List of FileStorage objects
+        self.storage_manager = LocalStorageManager()  # Use local storage manager
+        self.available_storages = []  # List of StorageLocation objects (local)
         self.selected_storage = None  # Currently selected storage
         
         self.setup_ui()
@@ -246,6 +246,11 @@ class ImportView(QWidget):
         
         storage_layout.addLayout(selector_layout)
         
+        # Add Storage button
+        add_storage_btn = QPushButton("➕ Add Storage Location")
+        add_storage_btn.clicked.connect(self.add_storage_location)
+        storage_layout.addWidget(add_storage_btn)
+        
         # Storage info/warning
         self.storage_info_label = QLabel("")
         self.storage_info_label.setWordWrap(True)
@@ -320,19 +325,20 @@ class ImportView(QWidget):
             self.import_log.append("Click 'New Import' to start importing photos.")
     
     def load_storages(self):
-        """Load available storage locations"""
+        """Load available storage locations from local config"""
         self.storage_combo.clear()
         self.available_storages = []
         
         try:
-            storages = self.api_client.get_file_storages()
+            # Get storages from local storage manager (no backend API call)
+            storages = self.storage_manager.get_active_storages()
             
             if not storages:
                 # No storages available
-                self.storage_combo.addItem("⚠️ No storage configured - Create one in Storage tab")
+                self.storage_combo.addItem("⚠️ No storage configured - Create one below")
                 self.storage_info_label.setText(
                     "⚠️ You must create a storage location before importing.\n"
-                    "Go to the Storage tab and click 'New Storage'."
+                    "Click 'Add Storage Location' to register a folder."
                 )
                 self.storage_info_label.setStyleSheet("color: #d32f2f; font-weight: bold; padding: 5px;")
                 self.selected_storage = None
@@ -341,10 +347,10 @@ class ImportView(QWidget):
                 
                 for storage in storages:
                     # Check if accessible
-                    is_accessible = self.check_storage_accessible(storage.full_path)
+                    is_accessible = self.check_storage_accessible(storage.base_path)
                     icon = "🟢" if is_accessible else "🔴"
                     
-                    display_text = f"{icon} {storage.display_name or storage.directory_name}"
+                    display_text = f"{icon} {storage.display_name}"
                     self.storage_combo.addItem(display_text)
                 
                 # Auto-select first storage
@@ -352,23 +358,11 @@ class ImportView(QWidget):
                     self.storage_combo.setCurrentIndex(0)
                 
         except Exception as e:
-            # Check if this is a 404 (API not implemented yet)
-            error_str = str(e)
-            if "404" in error_str or "Not Found" in error_str:
-                # Backend doesn't support FileStorage API yet - allow legacy workflow
-                self.storage_combo.addItem("💡 Legacy mode - Storage API not available")
-                self.storage_info_label.setText(
-                    "ℹ️ Backend doesn't support FileStorage API yet.\n"
-                    "You can still import using the legacy workflow."
-                )
-                self.storage_info_label.setStyleSheet("color: #1976d2; padding: 5px;")
-                self.selected_storage = None
-            else:
-                # Real error
-                self.storage_combo.addItem("❌ Failed to load storages")
-                self.storage_info_label.setText(f"Error loading storages: {str(e)}")
-                self.storage_info_label.setStyleSheet("color: #d32f2f; padding: 5px;")
-                self.selected_storage = None
+            # Error loading local storages
+            self.storage_combo.addItem("❌ Failed to load storages")
+            self.storage_info_label.setText(f"Error loading storages: {str(e)}")
+            self.storage_info_label.setStyleSheet("color: #d32f2f; padding: 5px;")
+            self.selected_storage = None
     
     def check_storage_accessible(self, full_path: str) -> bool:
         """Check if storage folder exists and is accessible"""
@@ -377,6 +371,38 @@ class ImportView(QWidget):
             return path.exists() and path.is_dir()
         except Exception:
             return False
+    
+    def add_storage_location(self):
+        """Add a new storage location to local config"""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Storage Location (folder where photos will be stored)",
+            str(Path.home())
+        )
+        
+        if not folder:
+            return
+        
+        # Register with local storage manager
+        storage_uuid = self.storage_manager.register_storage(folder)
+        
+        if storage_uuid:
+            QMessageBox.information(
+                self,
+                "Storage Added",
+                f"Storage location registered successfully!\n\n"
+                f"Location: {folder}\n"
+                f"UUID: {storage_uuid[:8]}..."
+            )
+            
+            # Reload storages
+            self.load_storages()
+        else:
+            QMessageBox.warning(
+                self,
+                "Failed to Add Storage",
+                "Could not register storage location. Check if the path is valid."
+            )
     
     def on_storage_selected(self, index: int):
         """Handle storage selection"""
@@ -389,13 +415,13 @@ class ImportView(QWidget):
         self.selected_storage = storage
         
         # Check accessibility
-        is_accessible = self.check_storage_accessible(storage.full_path)
+        is_accessible = self.check_storage_accessible(storage.base_path)
         
         if is_accessible:
             self.storage_status_label.setText("✅ Accessible")
             self.storage_status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
             self.storage_info_label.setText(
-                f"📁 Storage: {storage.full_path}\n"
+                f"📁 Storage: {storage.base_path}\n"
                 f"🆔 UUID: {storage.storage_uuid[:8]}..."
             )
             self.storage_info_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
@@ -403,7 +429,7 @@ class ImportView(QWidget):
             self.storage_status_label.setText("❌ Not Found")
             self.storage_status_label.setStyleSheet("color: #d32f2f; font-weight: bold;")
             self.storage_info_label.setText(
-                f"⚠️ Storage not accessible at: {storage.full_path}\n"
+                f"⚠️ Storage not accessible at: {storage.base_path}\n"
                 f"This may be an external drive. Connect it before importing."
             )
             self.storage_info_label.setStyleSheet("color: #ff9800; font-weight: bold; padding: 5px;")
@@ -447,23 +473,22 @@ class ImportView(QWidget):
                 return
             
             # Step 3: Verify storage accessibility
-            if not self.check_storage_accessible(self.selected_storage.full_path):
+            if not self.check_storage_accessible(self.selected_storage.base_path):
                 reply = QMessageBox.question(
                     self,
                     "Storage Not Accessible",
                     f"Selected storage is not accessible:\n\n"
-                    f"{self.selected_storage.full_path}\n\n"
+                    f"{self.selected_storage.base_path}\n\n"
                     f"This may be an external drive that is not connected.\n"
-                    f"Would you like to try to locate it?",
+                    f"Would you like to continue anyway?",
                     QMessageBox.Yes | QMessageBox.No
                 )
                 
-                if reply == QMessageBox.Yes:
-                    self.relocate_storage()
-                return
+                if reply == QMessageBox.No:
+                    return
             
             storage_uuid = self.selected_storage.storage_uuid
-            storage_location = self.selected_storage.full_path
+            storage_location = self.selected_storage.base_path
         
         # Step 4: Select source folder to import
         folder = QFileDialog.getExistingDirectory(
@@ -511,51 +536,7 @@ class ImportView(QWidget):
                 f"Could not create import session:\n{str(e)}"
             )
     
-    def relocate_storage(self):
-        """Help user relocate a storage that moved"""
-        if not self.selected_storage:
-            return
-        
-        # Ask user to select new parent directory
-        new_parent = QFileDialog.getExistingDirectory(
-            self,
-            "Select New Parent Directory (where storage folder is located)",
-            str(Path.home())
-        )
-        
-        if not new_parent:
-            return
-        
-        # Search for storage directory
-        storage_dir = Path(new_parent) / self.selected_storage.directory_name
-        
-        if storage_dir.exists() and storage_dir.is_dir():
-            # Verify it's a valid storage (has index.json)
-            if (storage_dir / "index.json").exists():
-                QMessageBox.information(
-                    self,
-                    "Storage Found",
-                    f"Storage found at new location!\n\n"
-                    f"Location: {storage_dir}\n\n"
-                    f"Note: Backend doesn't track accessibility status.\n"
-                    f"You can now proceed with the import."
-                )
-                
-                # Reload storages to update UI
-                self.load_storages()
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Storage",
-                    f"Folder found but does not appear to be a valid storage.\n"
-                    f"Missing index.json file."
-                )
-        else:
-            QMessageBox.warning(
-                self,
-                "Storage Not Found",
-                f"Storage folder '{self.selected_storage.directory_name}' not found in:\n{new_parent}"
-            )
+
     
     def add_session_to_list(self, session):
         """Add a session to the sessions list"""

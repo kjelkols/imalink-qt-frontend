@@ -124,7 +124,7 @@ class ThumbnailWidget(QFrame):
             self.quality_label.setStyleSheet("color: #888; font-size: 10px; font-style: italic;")
             layout.addWidget(self.quality_label)
         
-        # Title
+        # Title (use original filename)
         self.title_label = QLabel()
         self.title_label.setWordWrap(True)
         self.title_label.setMaximumHeight(30)
@@ -133,11 +133,48 @@ class ThumbnailWidget(QFrame):
         font.setPointSize(9)
         self.title_label.setFont(font)
         
-        title_text = self.photo.title if self.photo.title else f"Photo {self.photo.hothash[:8]}"
+        # Use primary_filename (original filename from database), fallback to title or hothash
+        title_text = (self.photo.primary_filename or 
+                     self.photo.title or 
+                     f"Photo {self.photo.hothash[:8]}")
         self.title_label.setText(title_text)
         layout.addWidget(self.title_label)
         
-        # Metadata
+        # Date taken (important - shown prominently)
+        self.date_label = QLabel()
+        self.date_label.setWordWrap(False)
+        self.date_label.setMaximumHeight(18)
+        date_font = QFont()
+        date_font.setBold(False)
+        date_font.setPointSize(8)
+        self.date_label.setFont(date_font)
+        self.date_label.setStyleSheet("color: #444;")
+        
+        # Prefer taken_at, fallback to first_imported or created_at
+        date_to_show = self.photo.taken_at or self.photo.first_imported or self.photo.created_at
+        
+        if date_to_show:
+            # Format date nicely (assuming ISO format from backend)
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(date_to_show.replace('Z', '+00:00'))
+                date_str = dt.strftime("%Y-%m-%d %H:%M")
+                # Show different prefix if not actual taken_at
+                if self.photo.taken_at:
+                    prefix = "📅"
+                elif self.photo.first_imported:
+                    prefix = "📥"  # Imported date as fallback
+                else:
+                    prefix = "📝"  # Created date as last resort
+            except:
+                date_str = date_to_show[:16]  # Fallback to first 16 chars
+                prefix = "📅"
+            self.date_label.setText(f"{prefix} {date_str}")
+        else:
+            self.date_label.setText("📅 No date")
+        layout.addWidget(self.date_label)
+        
+        # Metadata (rating, location, tags)
         self.metadata_label = QLabel()
         self.metadata_label.setWordWrap(True)
         self.metadata_label.setMaximumHeight(25)
@@ -156,7 +193,7 @@ class ThumbnailWidget(QFrame):
             tag_count = len(self.photo.tags)
             metadata_parts.append(f"{tag_count} tag{'s' if tag_count != 1 else ''}")
         
-        metadata_text = " • ".join(metadata_parts) if metadata_parts else "No metadata"
+        metadata_text = " • ".join(metadata_parts) if metadata_parts else ""
         self.metadata_label.setText(metadata_text)
         layout.addWidget(self.metadata_label)
     
