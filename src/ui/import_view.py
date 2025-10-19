@@ -5,7 +5,7 @@ Import Dashboard View - Main interface for managing photo imports
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QListWidget, QListWidgetItem, QGroupBox,
                                QFileDialog, QProgressBar, QTextEdit, QSplitter,
-                               QMessageBox, QFrame, QComboBox)
+                               QMessageBox, QFrame, QComboBox, QDialog)
 from PySide6.QtCore import Qt, Signal, QThread
 from pathlib import Path
 from datetime import datetime
@@ -13,6 +13,7 @@ import time
 from typing import List
 from ..storage.local_storage_manager import LocalStorageManager
 from ..api.client import generate_hotpreview_and_hash
+from .storage_browser import StorageBrowserDialog
 
 
 class ImportSessionWorker(QThread):
@@ -246,10 +247,21 @@ class ImportView(QWidget):
         
         storage_layout.addLayout(selector_layout)
         
+        # Storage action buttons row
+        storage_buttons = QHBoxLayout()
+        
         # Add Storage button
         add_storage_btn = QPushButton("➕ Add Storage Location")
         add_storage_btn.clicked.connect(self.add_storage_location)
-        storage_layout.addWidget(add_storage_btn)
+        storage_buttons.addWidget(add_storage_btn)
+        
+        # Find Storages button
+        find_storage_btn = QPushButton("🔍 Find Existing Storages")
+        find_storage_btn.clicked.connect(self.find_existing_storages)
+        find_storage_btn.setToolTip("Scan your computer for existing ImaLink storage locations")
+        storage_buttons.addWidget(find_storage_btn)
+        
+        storage_layout.addLayout(storage_buttons)
         
         # Storage info/warning
         self.storage_info_label = QLabel("")
@@ -403,6 +415,15 @@ class ImportView(QWidget):
                 "Failed to Add Storage",
                 "Could not register storage location. Check if the path is valid."
             )
+    
+    def find_existing_storages(self):
+        """Open storage browser to find existing storage locations"""
+        dialog = StorageBrowserDialog(self.storage_manager, self)
+        result = dialog.exec()
+        
+        if result == QDialog.Accepted:
+            # Reload storages to show newly added ones
+            self.load_storages()
     
     def on_storage_selected(self, index: int):
         """Handle storage selection"""
