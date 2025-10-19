@@ -70,10 +70,7 @@ class ColdpreviewUploadDialog(QDialog):
         
         # Coldpreview status
         info_layout.addWidget(QLabel("Current Coldpreview:"), 3, 0)
-        status_text = "Available" if self.photo.has_coldpreview else "Not available"
-        if self.photo.coldpreview_dimensions:
-            w, h = self.photo.coldpreview_dimensions
-            status_text += f" ({w}x{h})"
+        status_text = "Try loading to check availability"
         info_layout.addWidget(QLabel(status_text), 3, 1)
         
         parent_layout.addWidget(info_group)

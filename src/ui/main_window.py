@@ -11,6 +11,7 @@ from .gallery_view import GalleryView
 from .import_dialog import ImportDialog
 from .import_view import ImportView
 from .stats_view import StatsView
+from .storage_view import StorageView
 from ..api.client import ImaLinkClient
 import requests
 import subprocess
@@ -137,6 +138,11 @@ class MainWindow(QMainWindow):
         # Gallery tab
         self.gallery_view = GalleryView(self.api_client)
         self.tab_widget.addTab(self.gallery_view, "📸 Gallery")
+        
+        # Storage tab (NEW - must be before Import)
+        self.storage_view = StorageView(self.api_client)
+        self.storage_view.storage_changed.connect(self.on_storage_changed)
+        self.tab_widget.addTab(self.storage_view, "📦 Storage")
         
         # Import Dashboard tab
         self.import_view = ImportView(self.api_client)
@@ -293,6 +299,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "API Status Error",
-                f"Failed to get API status:\n{str(e)}"
+                "API Error",
+                f"Error checking API status:\n{str(e)}"
             )
+    
+    def on_storage_changed(self):
+        """Handle storage changes (created, updated, deleted)"""
+        # Reload import view to update storage selector
+        if hasattr(self, 'import_view'):
+            self.import_view.load_storages()

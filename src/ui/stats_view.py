@@ -41,6 +41,22 @@ class StatsLoadWorker(QThread):
             except:
                 stats["photos"] = "N/A"
             
+            # Count file storages via API
+            try:
+                storage_response = requests.get(f"{self.api_client.base_url}/file-storage/", timeout=5)
+                if storage_response.status_code == 200:
+                    storage_data = storage_response.json()
+                    if "data" in storage_data and "total_count" in storage_data["data"]:
+                        stats["file_storages"] = storage_data["data"]["total_count"]
+                    elif "data" in storage_data and "storages" in storage_data["data"]:
+                        stats["file_storages"] = len(storage_data["data"]["storages"])
+                    else:
+                        stats["file_storages"] = "N/A"
+                else:
+                    stats["file_storages"] = "N/A"
+            except:
+                stats["file_storages"] = "N/A"
+            
             # Get server info (not database details) via debug endpoint if available
             try:
                 debug_response = requests.get(f"{self.api_client.base_url}/debug/database-stats", timeout=5)
@@ -138,6 +154,26 @@ class StatsView(QWidget):
         
         header_layout.addStretch()
         
+        # Delete all button (danger)
+        self.delete_all_btn = QPushButton("🗑️ Delete All Data")
+        self.delete_all_btn.clicked.connect(self.confirm_delete_all)
+        self.delete_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;
+                color: white;
+                font-weight: bold;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #b71c1c;
+            }
+            QPushButton:disabled {
+                background-color: #999;
+            }
+        """)
+        self.delete_all_btn.setFixedWidth(140)
+        header_layout.addWidget(self.delete_all_btn)
+        
         # Refresh button
         self.refresh_btn = QPushButton("🔄 Refresh")
         self.refresh_btn.clicked.connect(self.load_stats)
@@ -231,6 +267,7 @@ class StatsView(QWidget):
         stat_configs = [
             ("photos", "📸 Photos", "Available via API"),
             ("images", "🖼️ Images", "Server records"),
+            ("file_storages", "💾 File Storages", "Storage locations"),
             ("authors", "👤 Authors", "Available authors"), 
             ("import_sessions", "📦 Import Sessions", "Import batches"),
         ]
@@ -291,3 +328,101 @@ class StatsView(QWidget):
     def refresh(self):
         """Manual refresh trigger"""
         self.load_stats()
+    
+    def confirm_delete_all(self):
+        """Show confirmation dialog before deleting all data"""
+        # Create a detailed warning message
+        warning_msg = (
+            "⚠️ WARNING: This will DELETE ALL DATA from the database!\n\n"
+            "This action will permanently remove:\n"
+            "• All photos and image files\n"
+            "• All file storage records\n"
+            "• All import sessions\n"
+            "• All authors\n"
+            "• All other database records\n\n"
+            "This operation CANNOT be undone!\n\n"
+            "Are you absolutely sure you want to continue?"
+        )
+        
+        # Show confirmation dialog with explicit Yes/No buttons
+        reply = QMessageBox.question(
+            self,
+            "⚠️ Confirm Delete All Data",
+            warning_msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No  # Default to No for safety
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Second confirmation for extra safety
+            final_confirm = QMessageBox.question(
+                self,
+                "⚠️ Final Confirmation",
+                "This is your FINAL warning!\n\n"
+                "Click YES to DELETE ALL DATA permanently.\n"
+                "Click NO to cancel.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if final_confirm == QMessageBox.Yes:
+                self.delete_all_data()
+    
+    def delete_all_data(self):
+        """Execute the delete all operation"""
+        try:
+            self.delete_all_btn.setEnabled(False)
+            self.delete_all_btn.setText("⏳ Deleting...")
+            self.status_label.setText("Deleting all data from database...")
+            
+            # Call the clear-database endpoint
+            response = requests.post(
+                f"{self.api_client.base_url}/debug/clear-database",
+                timeout=30
+            )
+            
+            if response.status_code == 204:
+                # Success
+                self.status_label.setText("✅ All data deleted successfully")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    "All data has been deleted from the database."
+                )
+                # Refresh stats to show zeros
+                self.load_stats()
+            else:
+                # Unexpected response
+                error_msg = f"Unexpected response: {response.status_code}"
+                self.status_label.setText(f"❌ Delete failed: {error_msg}")
+                QMessageBox.critical(
+                    self,
+                    "Delete Failed",
+                    f"Failed to delete data:\n{error_msg}"
+                )
+        
+        except requests.exceptions.RequestException as e:
+            # Network or API error
+            error_msg = str(e)
+            self.status_label.setText(f"❌ Delete failed: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "Delete Failed",
+                f"Failed to delete data:\n{error_msg}\n\n"
+                "Make sure the API server is running."
+            )
+        
+        except Exception as e:
+            # Unexpected error
+            error_msg = str(e)
+            self.status_label.setText(f"❌ Unexpected error: {error_msg}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An unexpected error occurred:\n{error_msg}"
+            )
+        
+        finally:
+            # Re-enable button
+            self.delete_all_btn.setEnabled(True)
+            self.delete_all_btn.setText("🗑️ Delete All Data")

@@ -23,7 +23,7 @@ class ThumbnailLoadWorker(QThread):
     
     def run(self):
         try:
-            if self.size_hint == "medium" and self.photo.supports_coldpreview:
+            if self.size_hint == "medium" and self.photo.hothash:
                 # Try coldpreview first for medium-size displays
                 try:
                     thumbnail_data = self.api_client.get_photo_coldpreview(
@@ -35,7 +35,7 @@ class ThumbnailLoadWorker(QThread):
                     # Fall back to hotpreview if coldpreview fails
                     pass
             
-            elif self.size_hint == "large" and self.photo.supports_coldpreview:
+            elif self.size_hint == "large" and self.photo.hothash:
                 # Try larger coldpreview for big displays
                 try:
                     thumbnail_data = self.api_client.get_photo_coldpreview(

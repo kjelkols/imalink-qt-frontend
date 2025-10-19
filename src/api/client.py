@@ -3,13 +3,80 @@ Main API client for ImaLink backend communication
 """
 
 import requests
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import base64
 from io import BytesIO
 from PIL import Image
 from pathlib import Path
+import hashlib
 
-from .models import Photo, PaginatedResponse, PhotoSearchRequest, PhotoUpdateRequest, ImportSession
+from .models import Photo, PaginatedResponse, PhotoSearchRequest, PhotoUpdateRequest, ImportSession, FileStorage
+
+
+def generate_hotpreview_and_hash(file_path: str) -> Tuple[bytes, str, str]:
+    """
+    Generate hotpreview (150x150 JPEG) and hothash for an image file.
+    
+    Args:
+        file_path: Path to image file
+        
+    Returns:
+        Tuple of (hotpreview_bytes, hotpreview_base64, hothash)
+    """
+    # Generate hotpreview (150x150 JPEG)
+    img = Image.open(file_path)
+    
+    # Handle EXIF rotation
+    try:
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img)
+    except:
+        pass
+    
+    img.thumbnail((150, 150), Image.Resampling.LANCZOS)
+    
+    # Convert to JPEG bytes
+    buffer = BytesIO()
+    img.convert("RGB").save(buffer, format="JPEG", quality=85)
+    hotpreview_bytes = buffer.getvalue()
+    
+    # Generate hothash (SHA256 of hotpreview bytes)
+    hothash = hashlib.sha256(hotpreview_bytes).hexdigest()
+    
+    # Base64 encode for API transmission
+    hotpreview_b64 = base64.b64encode(hotpreview_bytes).decode()
+    
+    return hotpreview_bytes, hotpreview_b64, hothash
+
+
+def generate_coldpreview(file_path: str, max_size: int = 1200) -> bytes:
+    """
+    Generate coldpreview (max 1200px JPEG) for an image file.
+    
+    Args:
+        file_path: Path to image file
+        max_size: Maximum dimension in pixels (default 1200)
+        
+    Returns:
+        Coldpreview JPEG bytes
+    """
+    img = Image.open(file_path)
+    
+    # Handle EXIF rotation
+    try:
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img)
+    except:
+        pass
+    
+    # Resize to max dimension while maintaining aspect ratio
+    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    
+    # Convert to JPEG bytes with 85% quality
+    buffer = BytesIO()
+    img.convert("RGB").save(buffer, format="JPEG", quality=85)
+    
+    return buffer.getvalue()
 
 
 class ImaLinkClient:
@@ -47,6 +114,14 @@ class ImaLinkClient:
         response = self.session.get(f"{self.base_url}/photos/{hothash}")
         response.raise_for_status()
         return Photo(**response.json())
+    
+    def photo_exists(self, hothash: str) -> bool:
+        """Check if a photo exists by hothash (returns True if exists, False otherwise)"""
+        try:
+            response = self.session.get(f"{self.base_url}/photos/{hothash}")
+            return response.status_code == 200
+        except:
+            return False
     
     def get_photo_thumbnail(self, hothash: str) -> bytes:
         """Get photo thumbnail as JPEG bytes"""
@@ -126,22 +201,8 @@ class ImaLinkClient:
         """Import a single image file"""
         path = Path(file_path)
         
-        # Generate hotpreview (150x150 JPEG)
-        img = Image.open(file_path)
-        
-        # Handle EXIF rotation
-        try:
-            from PIL import ImageOps
-            img = ImageOps.exif_transpose(img)
-        except:
-            pass
-        
-        img.thumbnail((150, 150), Image.Resampling.LANCZOS)
-        
-        # Convert to JPEG bytes
-        buffer = BytesIO()
-        img.convert("RGB").save(buffer, format="JPEG", quality=85)
-        hotpreview_b64 = base64.b64encode(buffer.getvalue()).decode()
+        # Generate hotpreview and hothash using shared function
+        _, hotpreview_b64, hothash = generate_hotpreview_and_hash(file_path)
         
         # Prepare payload
         payload = {
@@ -159,7 +220,15 @@ class ImaLinkClient:
             json=payload
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Add hothash to result for frontend use
+        if 'data' in result:
+            result['data']['hothash'] = hothash
+        else:
+            result['hothash'] = hothash
+            
+        return result
     
     def bulk_import(self, file_paths: List[str], session_name: str = None, 
                    import_path: str = None) -> dict:
@@ -226,34 +295,38 @@ class ImaLinkClient:
     def upload_photo_coldpreview(self, hothash: str, image_path: str) -> dict:
         """Upload coldpreview for a photo
         
+        Generates a 1200px JPEG locally and uploads it to backend.
+        
         Args:
             hothash: Photo hash identifier
-            image_path: Path to image file to upload as coldpreview
+            image_path: Path to original image file
             
         Returns:
             Response with coldpreview metadata including width, height, size, path
             
         Raises:
-            requests.HTTPError: If upload fails
+            requests.HTTPError: If upload fails (response preserved in exception)
             FileNotFoundError: If image file doesn't exist
         """
         image_path = Path(image_path)
         if not image_path.exists():
             raise FileNotFoundError(f"Image file not found: {image_path}")
         
-        with open(image_path, 'rb') as f:
-            # Proper multipart form data with explicit filename and content type
-            files = {
-                'file': (image_path.name, f, 'image/jpeg')
-            }
-            # Remove Content-Type header for multipart uploads
-            headers = {k: v for k, v in self.session.headers.items() 
-                      if k.lower() != 'content-type'}
-            response = self.session.put(
-                f"{self.base_url}/photos/{hothash}/coldpreview",
-                files=files,
-                headers=headers
-            )
+        # Generate coldpreview (1200px JPEG) locally
+        coldpreview_bytes = generate_coldpreview(str(image_path), max_size=1200)
+        
+        # Upload using direct requests.put() instead of session.put()
+        # This avoids the Content-Type: application/json header from session
+        # interfering with multipart form-data encoding
+        files = {
+            'file': ('coldpreview.jpg', coldpreview_bytes, 'image/jpeg')
+        }
+        
+        response = requests.put(
+            f"{self.base_url}/photos/{hothash}/coldpreview",
+            files=files
+        )
+        
         response.raise_for_status()
         return response.json()
     
@@ -339,3 +412,131 @@ class ImaLinkClient:
         )
         response.raise_for_status()
         return ImportSession(**response.json())
+    
+    # === FileStorage Methods (Simplified API) ===
+    
+    def register_file_storage(self, base_path: str, display_name: str, 
+                            description: str = None) -> FileStorage:
+        """Create a new file storage location
+        
+        Backend generates both UUID and directory_name automatically.
+        Frontend receives the generated names and creates physical directory accordingly.
+        
+        Args:
+            base_path: Parent directory where storage folder will be created
+            display_name: User-friendly name for the storage
+            description: Optional notes about this storage
+            
+        Returns:
+            FileStorage object with backend-generated UUID and directory_name
+        """
+        payload = {
+            "base_path": base_path,
+            "display_name": display_name
+        }
+        if description:
+            payload["description"] = description
+        
+        response = self.session.post(
+            f"{self.base_url}/file-storage/",
+            json=payload
+        )
+        response.raise_for_status()
+        
+        # Handle response wrapper
+        data = response.json()
+        if "data" in data:
+            return FileStorage(**data["data"])
+        return FileStorage(**data)
+    
+    def get_file_storages(self) -> List[FileStorage]:
+        """Get all registered file storage locations
+        
+        Returns:
+            List of FileStorage objects
+        """
+        response = self.session.get(f"{self.base_url}/file-storage/")
+        response.raise_for_status()
+        data = response.json()
+        
+        # Handle response wrapper: {"success": true, "data": {"storages": [...], "total_count": N}}
+        if "data" in data and "storages" in data["data"]:
+            return [FileStorage(**item) for item in data["data"]["storages"]]
+        elif isinstance(data, list):
+            return [FileStorage(**item) for item in data]
+        elif "storages" in data:
+            return [FileStorage(**item) for item in data["storages"]]
+        elif "items" in data:
+            return [FileStorage(**item) for item in data["items"]]
+        else:
+            return []
+    
+    def get_file_storage(self, storage_uuid: str) -> FileStorage:
+        """Get specific file storage by UUID
+        
+        Args:
+            storage_uuid: Storage identifier
+            
+        Returns:
+            FileStorage object
+        """
+        response = self.session.get(
+            f"{self.base_url}/file-storage/{storage_uuid}"
+        )
+        response.raise_for_status()
+        
+        # Handle response wrapper
+        data = response.json()
+        if "data" in data:
+            return FileStorage(**data["data"])
+        return FileStorage(**data)
+    
+    def update_file_storage(self, storage_uuid: str, display_name: str = None,
+                          description: str = None) -> FileStorage:
+        """Update file storage metadata (only display_name and description allowed)
+        
+        Note: Backend returns only updated fields. This method fetches the full
+        object after update to return complete FileStorage.
+        
+        Args:
+            storage_uuid: Storage identifier
+            display_name: New display name (optional)
+            description: New description (optional)
+            
+        Returns:
+            Updated FileStorage object (refetched to get all fields)
+        """
+        payload = {}
+        if display_name is not None:
+            payload["display_name"] = display_name
+        if description is not None:
+            payload["description"] = description
+        
+        response = self.session.put(
+            f"{self.base_url}/file-storage/{storage_uuid}",
+            json=payload
+        )
+        response.raise_for_status()
+        
+        # Backend returns partial data, fetch complete object
+        return self.get_file_storage(storage_uuid)
+    
+    def delete_file_storage(self, storage_uuid: str) -> dict:
+        """Delete file storage record (permanent)
+        
+        Args:
+            storage_uuid: Storage identifier
+            
+        Returns:
+            Success response or empty dict for 204 No Content
+        """
+        response = self.session.delete(
+            f"{self.base_url}/file-storage/{storage_uuid}"
+        )
+        response.raise_for_status()
+        
+        # 204 No Content returns empty body
+        if response.status_code == 204:
+            return {"success": True}
+        
+        return response.json()

@@ -22,7 +22,8 @@ class PhotoListModel(QAbstractListModel):
     TagsRole = Qt.UserRole + 7
     CreatedAtRole = Qt.UserRole + 8
     
-    dataChanged = Signal()
+    # Custom signal for when the list of photos changes (not individual items)
+    photosChanged = Signal()
     
     def __init__(self, api_client: ImaLinkClient = None):
         super().__init__()
@@ -80,14 +81,14 @@ class PhotoListModel(QAbstractListModel):
         self.beginResetModel()
         self._photos = photos.copy()
         self.endResetModel()
-        self.dataChanged.emit()
+        self.photosChanged.emit()
     
     def addPhoto(self, photo: Photo):
         """Add a single photo to the model"""
         self.beginInsertRows(QModelIndex(), len(self._photos), len(self._photos))
         self._photos.append(photo)
         self.endInsertRows()
-        self.dataChanged.emit()
+        self.photosChanged.emit()
     
     def addPhotos(self, photos: List[Photo]):
         """Add multiple photos to the model"""
@@ -100,7 +101,7 @@ class PhotoListModel(QAbstractListModel):
         self.beginInsertRows(QModelIndex(), start_row, end_row)
         self._photos.extend(photos)
         self.endInsertRows()
-        self.dataChanged.emit()
+        self.photosChanged.emit()
     
     def removePhoto(self, index: int) -> bool:
         """Remove a photo at the given index"""
@@ -110,7 +111,7 @@ class PhotoListModel(QAbstractListModel):
         self.beginRemoveRows(QModelIndex(), index, index)
         del self._photos[index]
         self.endRemoveRows()
-        self.dataChanged.emit()
+        self.photosChanged.emit()
         return True
     
     def updatePhoto(self, index: int, photo: Photo) -> bool:
@@ -155,7 +156,7 @@ class PhotoListModel(QAbstractListModel):
         self.beginResetModel()
         self._photos.clear()
         self.endResetModel()
-        self.dataChanged.emit()
+        self.photosChanged.emit()
     
     def getPhotos(self) -> List[Photo]:
         """Get a copy of all photos"""
@@ -196,7 +197,7 @@ class PhotoFilterProxyModel(QAbstractListModel):
     def __init__(self, source_model: PhotoListModel):
         super().__init__()
         self.source_model = source_model
-        self.source_model.dataChanged.connect(self.update_filter)
+        self.source_model.photosChanged.connect(self.update_filter)
         self._filtered_indices: List[int] = []
         self._filter_text = ""
         self._min_rating = 0

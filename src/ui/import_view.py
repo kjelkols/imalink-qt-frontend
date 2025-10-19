@@ -5,13 +5,14 @@ Import Dashboard View - Main interface for managing photo imports
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QListWidget, QListWidgetItem, QGroupBox,
                                QFileDialog, QProgressBar, QTextEdit, QSplitter,
-                               QMessageBox, QFrame)
+                               QMessageBox, QFrame, QComboBox)
 from PySide6.QtCore import Qt, Signal, QThread
 from pathlib import Path
 from datetime import datetime
 import time
 from typing import List
 from ..storage.import_tracker import ImportFolderTracker
+from ..api.client import generate_hotpreview_and_hash
 
 
 class ImportSessionWorker(QThread):
@@ -20,13 +21,15 @@ class ImportSessionWorker(QThread):
     import_completed = Signal(dict)  # result summary
     error_occurred = Signal(str)
     
-    def __init__(self, api_client, folder_path: str, session_name: str, session_id: int):
+    def __init__(self, api_client, folder_path: str, session_name: str, session_id: int, storage_uuid: str = None, storage_path: str = None):
         super().__init__()
         self.api_client = api_client
         self.folder_path = Path(folder_path)
         self.session_name = session_name
         self.session_id = session_id
-        self.folder_tracker = ImportFolderTracker()
+        self.storage_uuid = storage_uuid  # Storage UUID for this import
+        self.storage_path = Path(storage_path) if storage_path else None  # Physical path to storage
+        self.folder_tracker = ImportFolderTracker(api_client)
     
     def run(self):
         try:
@@ -47,24 +50,72 @@ class ImportSessionWorker(QThread):
             total = len(image_files)
             self.progress_updated.emit(0, total, f"Found {total} images to import")
             
-            # Import each file
+            # Prepare storage photos directory if available
+            photos_dir = None
+            if self.storage_path:
+                photos_dir = self.storage_path / "photos"
+                if not photos_dir.exists():
+                    photos_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Import each file using new strategy
             results = []
             errors = []
+            new_imports = []
+            existing_imports = []
             
             for idx, file_path in enumerate(image_files, 1):
                 try:
-                    # Import image to API
-                    result = self.api_client.import_image(str(file_path), self.session_id)
-                    results.append(result)
+                    # STEP 1 & 2: Generate hotpreview and hothash
+                    hotpreview_bytes, hotpreview_b64, hothash = generate_hotpreview_and_hash(str(file_path))
                     
-                    # Track import folder for this photo
-                    hothash = result.get('photo_hothash') or result.get('hothash')
-                    if hothash:
-                        self.folder_tracker.set_import_folder(hothash, str(self.folder_path))
+                    # STEP 3: Check if Photo exists using hothash
+                    photo_exists = self.api_client.photo_exists(hothash)
+                    
+                    if photo_exists:
+                        # STEP 4: Photo already exists - just mark it
+                        existing_imports.append({'hothash': hothash, 'filename': file_path.name})
+                        status_msg = f"⊕ Already exists: {file_path.name}"
+                        results.append({'hothash': hothash, 'is_new': False})
+                    else:
+                        # STEP 5: Photo doesn't exist - register it with backend
+                        result = self.api_client.import_image(str(file_path), self.session_id)
+                        
+                        # Upload coldpreview (1200px) for new photos
+                        try:
+                            coldpreview_result = self.api_client.upload_photo_coldpreview(hothash, str(file_path))
+                            self.progress_updated.emit(idx, total, f"  ↳ Coldpreview uploaded")
+                        except Exception as e:
+                            # Don't fail import if coldpreview upload fails
+                            # Log detailed error info for debugging
+                            error_detail = str(e)
+                            if hasattr(e, 'response') and e.response is not None:
+                                try:
+                                    error_body = e.response.json()
+                                    error_detail = f"{e.response.status_code}: {error_body}"
+                                except:
+                                    error_detail = f"{e.response.status_code}: {e.response.text}"
+                            self.progress_updated.emit(idx, total, f"  ↳ Coldpreview failed: {error_detail}")
+                        
+                        # Copy file to storage/photos/ preserving directory structure
+                        if photos_dir:
+                            import shutil
+                            # Get relative path from import folder root
+                            relative_path = file_path.relative_to(self.folder_path)
+                            dest_path = photos_dir / relative_path
+                            
+                            # Create subdirectories if needed
+                            dest_path.parent.mkdir(parents=True, exist_ok=True)
+                            
+                            # Copy file preserving original name and structure
+                            shutil.copy2(file_path, dest_path)
+                        
+                        new_imports.append({'hothash': hothash, 'filename': file_path.name})
+                        status_msg = f"✓ New: {file_path.name}"
+                        results.append({'hothash': hothash, 'is_new': True})
                     
                     self.progress_updated.emit(
                         idx, total, 
-                        f"Imported {idx}/{total}: {file_path.name}"
+                        f"{idx}/{total}: {status_msg}"
                     )
                     
                 except Exception as e:
@@ -72,7 +123,7 @@ class ImportSessionWorker(QThread):
                     errors.append({"file": str(file_path), "error": str(e)})
                     self.progress_updated.emit(
                         idx, total,
-                        f"Failed {idx}/{total}: {error_msg}"
+                        f"✗ Failed {idx}/{total}: {error_msg}"
                     )
             
             # Send completion summary
@@ -82,6 +133,8 @@ class ImportSessionWorker(QThread):
                 "folder_path": str(self.folder_path),
                 "total_files": total,
                 "imported": len(results),
+                "new_imports": len(new_imports),
+                "existing": len(existing_imports),
                 "failed": len(errors),
                 "results": results,
                 "errors": errors
@@ -101,8 +154,12 @@ class ImportView(QWidget):
         super().__init__(parent)
         self.api_client = api_client
         self.current_worker = None
+        self.folder_tracker = ImportFolderTracker(api_client)  # Pass API client
+        self.available_storages = []  # List of FileStorage objects
+        self.selected_storage = None  # Currently selected storage
         
         self.setup_ui()
+        self.load_storages()  # Load storages first
         self.load_import_sessions()
     
     def setup_ui(self):
@@ -166,6 +223,36 @@ class ImportView(QWidget):
         """Create the import details/progress panel"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        
+        # Storage selection group (NEW - at top)
+        storage_group = QGroupBox("📦 Storage Location (Required)")
+        storage_layout = QVBoxLayout(storage_group)
+        
+        # Storage selector
+        selector_layout = QHBoxLayout()
+        
+        self.storage_combo = QComboBox()
+        self.storage_combo.currentIndexChanged.connect(self.on_storage_selected)
+        selector_layout.addWidget(self.storage_combo, stretch=3)
+        
+        self.storage_status_label = QLabel("")
+        selector_layout.addWidget(self.storage_status_label, stretch=1)
+        
+        refresh_storage_btn = QPushButton("↻")
+        refresh_storage_btn.setToolTip("Refresh storage list")
+        refresh_storage_btn.setMaximumWidth(40)
+        refresh_storage_btn.clicked.connect(self.load_storages)
+        selector_layout.addWidget(refresh_storage_btn)
+        
+        storage_layout.addLayout(selector_layout)
+        
+        # Storage info/warning
+        self.storage_info_label = QLabel("")
+        self.storage_info_label.setWordWrap(True)
+        self.storage_info_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
+        storage_layout.addWidget(self.storage_info_label)
+        
+        layout.addWidget(storage_group)
         
         # Session info group
         info_group = QGroupBox("Session Information")
@@ -232,12 +319,156 @@ class ImportView(QWidget):
             self.import_log.append(f"⚠️ Could not load import sessions: {str(e)}")
             self.import_log.append("Click 'New Import' to start importing photos.")
     
+    def load_storages(self):
+        """Load available storage locations"""
+        self.storage_combo.clear()
+        self.available_storages = []
+        
+        try:
+            storages = self.api_client.get_file_storages()
+            
+            if not storages:
+                # No storages available
+                self.storage_combo.addItem("⚠️ No storage configured - Create one in Storage tab")
+                self.storage_info_label.setText(
+                    "⚠️ You must create a storage location before importing.\n"
+                    "Go to the Storage tab and click 'New Storage'."
+                )
+                self.storage_info_label.setStyleSheet("color: #d32f2f; font-weight: bold; padding: 5px;")
+                self.selected_storage = None
+            else:
+                self.available_storages = storages
+                
+                for storage in storages:
+                    # Check if accessible
+                    is_accessible = self.check_storage_accessible(storage.full_path)
+                    icon = "🟢" if is_accessible else "🔴"
+                    
+                    display_text = f"{icon} {storage.display_name or storage.directory_name}"
+                    self.storage_combo.addItem(display_text)
+                
+                # Auto-select first storage
+                if self.storage_combo.count() > 0:
+                    self.storage_combo.setCurrentIndex(0)
+                
+        except Exception as e:
+            # Check if this is a 404 (API not implemented yet)
+            error_str = str(e)
+            if "404" in error_str or "Not Found" in error_str:
+                # Backend doesn't support FileStorage API yet - allow legacy workflow
+                self.storage_combo.addItem("💡 Legacy mode - Storage API not available")
+                self.storage_info_label.setText(
+                    "ℹ️ Backend doesn't support FileStorage API yet.\n"
+                    "You can still import using the legacy workflow."
+                )
+                self.storage_info_label.setStyleSheet("color: #1976d2; padding: 5px;")
+                self.selected_storage = None
+            else:
+                # Real error
+                self.storage_combo.addItem("❌ Failed to load storages")
+                self.storage_info_label.setText(f"Error loading storages: {str(e)}")
+                self.storage_info_label.setStyleSheet("color: #d32f2f; padding: 5px;")
+                self.selected_storage = None
+    
+    def check_storage_accessible(self, full_path: str) -> bool:
+        """Check if storage folder exists and is accessible"""
+        try:
+            path = Path(full_path)
+            return path.exists() and path.is_dir()
+        except Exception:
+            return False
+    
+    def on_storage_selected(self, index: int):
+        """Handle storage selection"""
+        if index < 0 or index >= len(self.available_storages):
+            self.selected_storage = None
+            self.storage_status_label.setText("")
+            return
+        
+        storage = self.available_storages[index]
+        self.selected_storage = storage
+        
+        # Check accessibility
+        is_accessible = self.check_storage_accessible(storage.full_path)
+        
+        if is_accessible:
+            self.storage_status_label.setText("✅ Accessible")
+            self.storage_status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
+            self.storage_info_label.setText(
+                f"📁 Storage: {storage.full_path}\n"
+                f"🆔 UUID: {storage.storage_uuid[:8]}..."
+            )
+            self.storage_info_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
+        else:
+            self.storage_status_label.setText("❌ Not Found")
+            self.storage_status_label.setStyleSheet("color: #d32f2f; font-weight: bold;")
+            self.storage_info_label.setText(
+                f"⚠️ Storage not accessible at: {storage.full_path}\n"
+                f"This may be an external drive. Connect it before importing."
+            )
+            self.storage_info_label.setStyleSheet("color: #ff9800; font-weight: bold; padding: 5px;")
+    
     def start_new_import(self):
         """Start a new import session"""
-        # Open folder dialog
+        # Step 1: Check if any storage exists
+        if not self.available_storages:
+            reply = QMessageBox.warning(
+                self,
+                "No Storage Configured",
+                "You must create a storage location before importing photos.\n\n"
+                "Would you like to go to the Storage tab now?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Switch to Storage tab
+                # This requires access to the main window's tab widget
+                main_window = self.window()
+                if hasattr(main_window, 'tab_widget'):
+                    # Find Storage tab (index 1)
+                    for i in range(main_window.tab_widget.count()):
+                        if "Storage" in main_window.tab_widget.tabText(i):
+                            main_window.tab_widget.setCurrentIndex(i)
+                            break
+            return
+        
+        # Step 2: Check if a storage is selected (only if storage API is available)
+        storage_uuid = None
+        storage_location = None
+        
+        if self.available_storages:
+            # Storage API is available - require storage selection
+            if not self.selected_storage:
+                QMessageBox.warning(
+                    self,
+                    "No Storage Selected",
+                    "Please select a storage location from the dropdown before importing."
+                )
+                return
+            
+            # Step 3: Verify storage accessibility
+            if not self.check_storage_accessible(self.selected_storage.full_path):
+                reply = QMessageBox.question(
+                    self,
+                    "Storage Not Accessible",
+                    f"Selected storage is not accessible:\n\n"
+                    f"{self.selected_storage.full_path}\n\n"
+                    f"This may be an external drive that is not connected.\n"
+                    f"Would you like to try to locate it?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    self.relocate_storage()
+                return
+            
+            storage_uuid = self.selected_storage.storage_uuid
+            storage_location = self.selected_storage.full_path
+        
+        # Step 4: Select source folder to import
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Select Folder to Import (folder will also be used as storage location)",
+            "Select Folder with Photos to Import",
             str(Path.home())
         )
         
@@ -250,11 +481,13 @@ class ImportView(QWidget):
         session_title = f"{folder_path.name} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         
         try:
-            # Create import session in backend
-            import_session = self.api_client.create_import_session(
-                title=session_title,
-                storage_location=str(folder_path)
-            )
+            # Create import session in backend (with storage info if available)
+            create_params = {"title": session_title}
+            if storage_location:
+                create_params["storage_location"] = storage_location
+                # TODO: Add storage_uuid parameter when backend supports it
+            
+            import_session = self.api_client.create_import_session(**create_params)
             
             # Add to list
             self.add_session_to_list(import_session)
@@ -262,14 +495,66 @@ class ImportView(QWidget):
             # Update details panel
             self.show_session_details(import_session)
             
-            # Start import
-            self.start_import_worker(folder_path, session_title, import_session.id)
+            # Start import with storage_uuid (if available)
+            self.start_import_worker(
+                folder_path, 
+                session_title, 
+                import_session.id, 
+                storage_uuid,
+                storage_location  # Pass storage path for file copying
+            )
             
         except Exception as e:
             QMessageBox.critical(
                 self,
                 "Failed to Create Session",
                 f"Could not create import session:\n{str(e)}"
+            )
+    
+    def relocate_storage(self):
+        """Help user relocate a storage that moved"""
+        if not self.selected_storage:
+            return
+        
+        # Ask user to select new parent directory
+        new_parent = QFileDialog.getExistingDirectory(
+            self,
+            "Select New Parent Directory (where storage folder is located)",
+            str(Path.home())
+        )
+        
+        if not new_parent:
+            return
+        
+        # Search for storage directory
+        storage_dir = Path(new_parent) / self.selected_storage.directory_name
+        
+        if storage_dir.exists() and storage_dir.is_dir():
+            # Verify it's a valid storage (has index.json)
+            if (storage_dir / "index.json").exists():
+                QMessageBox.information(
+                    self,
+                    "Storage Found",
+                    f"Storage found at new location!\n\n"
+                    f"Location: {storage_dir}\n\n"
+                    f"Note: Backend doesn't track accessibility status.\n"
+                    f"You can now proceed with the import."
+                )
+                
+                # Reload storages to update UI
+                self.load_storages()
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Storage",
+                    f"Folder found but does not appear to be a valid storage.\n"
+                    f"Missing index.json file."
+                )
+        else:
+            QMessageBox.warning(
+                self,
+                "Storage Not Found",
+                f"Storage folder '{self.selected_storage.directory_name}' not found in:\n{new_parent}"
             )
     
     def add_session_to_list(self, session):
@@ -301,11 +586,15 @@ class ImportView(QWidget):
         stats += f"Images: {session.images_count}"
         self.session_stats_label.setText(stats)
     
-    def start_import_worker(self, folder_path: Path, session_name: str, session_id: int):
+    def start_import_worker(self, folder_path: Path, session_name: str, session_id: int, storage_uuid: str = None, storage_path: str = None):
         """Start the import worker thread"""
         self.import_log.clear()
         self.import_log.append(f"Starting import from: {folder_path}")
         self.import_log.append(f"Session: {session_name}")
+        if storage_uuid:
+            self.import_log.append(f"Storage UUID: {storage_uuid}")
+        if storage_path:
+            self.import_log.append(f"Storage path: {storage_path}")
         self.import_log.append("Scanning for JPEG files...")
         
         self.progress_bar.setVisible(True)
@@ -316,7 +605,9 @@ class ImportView(QWidget):
             self.api_client,
             str(folder_path),
             session_name,
-            session_id
+            session_id,
+            storage_uuid,  # Pass storage_uuid to worker
+            storage_path   # Pass storage_path for file copying
         )
         
         self.current_worker.progress_updated.connect(self.on_import_progress)
@@ -341,15 +632,17 @@ class ImportView(QWidget):
         """Handle import completion"""
         self.progress_bar.setVisible(False)
         
-        imported = result["imported"]
-        failed = result["failed"]
         total = result["total_files"]
+        new_imports = result.get("new_imports", 0)
+        existing = result.get("existing", 0)
+        failed = result["failed"]
         
         self.import_log.append("\n" + "="*50)
         self.import_log.append("✅ Import completed!")
-        self.import_log.append(f"Total files: {total}")
-        self.import_log.append(f"Successfully imported: {imported}")
-        self.import_log.append(f"Failed: {failed}")
+        self.import_log.append(f"Total files scanned: {total}")
+        self.import_log.append(f"✓ New photos imported: {new_imports}")
+        self.import_log.append(f"⊕ Already in database: {existing}")
+        self.import_log.append(f"✗ Failed: {failed}")
         
         if failed > 0:
             self.import_log.append("\nErrors:")
@@ -362,16 +655,22 @@ class ImportView(QWidget):
         # Refresh sessions list from backend
         self.load_import_sessions()
         
-        # Notify that photos were imported
-        self.photos_imported.emit()
+        # Notify that photos were imported (even if some already existed)
+        if new_imports > 0:
+            self.photos_imported.emit()
         
-        # Show completion message
+        # Show completion message with detailed breakdown
+        message_parts = [f"Scanned: {total} files"]
+        message_parts.append(f"✓ New photos: {new_imports}")
+        if existing > 0:
+            message_parts.append(f"⊕ Already in database: {existing}")
+        if failed > 0:
+            message_parts.append(f"✗ Failed: {failed}")
+        
         QMessageBox.information(
             self,
             "Import Complete",
-            f"Import completed successfully!\n\n"
-            f"Imported: {imported}/{total} files\n"
-            f"Failed: {failed} files"
+            "Import completed!\n\n" + "\n".join(message_parts)
         )
     
     def on_import_error(self, error_message: str):

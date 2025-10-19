@@ -7,6 +7,29 @@ from typing import List, Optional
 
 
 @dataclass
+class FileStorage:
+    """File storage location data model (simplified - backend only stores metadata)"""
+    storage_uuid: str
+    directory_name: str
+    full_path: str
+    id: Optional[int] = None
+    base_path: Optional[str] = None  # Can be computed from full_path if missing
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    import_sessions_count: Optional[int] = None  # Number of import sessions using this storage
+    
+    def __post_init__(self):
+        """Compute base_path from full_path if not provided"""
+        if self.base_path is None and self.full_path and self.directory_name:
+            # Extract base_path from full_path by removing directory_name
+            from pathlib import Path
+            full_p = Path(self.full_path)
+            self.base_path = str(full_p.parent)
+
+
+@dataclass
 class ImportSession:
     """Import session data model"""
     id: int
@@ -14,6 +37,8 @@ class ImportSession:
     title: Optional[str] = None
     description: Optional[str] = None
     storage_location: Optional[str] = None
+    file_storage_id: Optional[int] = None  # FK to FileStorage
+    storage_uuid: Optional[str] = None  # Direct UUID reference
     default_author_id: Optional[int] = None
     images_count: int = 0
 
@@ -39,20 +64,20 @@ class Photo:
     author: Optional[dict] = None
     author_id: Optional[int] = None
     import_session_id: Optional[int] = None
+    import_sessions: Optional[List[int]] = None  # List of import session IDs
+    first_imported: Optional[str] = None  # First import timestamp
+    last_imported: Optional[str] = None  # Last import timestamp
     has_gps: bool = False
     has_raw_companion: bool = False
     primary_filename: str = ""
     files: List[dict] = None
     
-    # Local storage information (simplified - folder is storage location)
-    import_folder: Optional[str] = None  # Folder from which file was imported (also storage location)
-    
-    # Coldpreview metadata
-    has_coldpreview: bool = False
-    coldpreview_width: Optional[int] = None
-    coldpreview_height: Optional[int] = None
-    coldpreview_size: Optional[int] = None  # File size in bytes
-    coldpreview_path: Optional[str] = None  # Backend storage path
+    # Backend metadata fields (not used by frontend - backend sends actual images via endpoints)
+    # These exist to accept backend response, but frontend should use try-and-fetch pattern
+    coldpreview_path: Optional[str] = None  # Backend file path (ignored by frontend)
+    coldpreview_width: Optional[int] = None  # Backend metadata (ignored by frontend)
+    coldpreview_height: Optional[int] = None  # Backend metadata (ignored by frontend)
+    coldpreview_size: Optional[int] = None  # Backend metadata (ignored by frontend)
     
     def __post_init__(self):
         if self.tags is None:
@@ -60,19 +85,6 @@ class Photo:
         if self.files is None:
             self.files = []
     
-    @property
-    def supports_coldpreview(self) -> bool:
-        """Check if this photo supports coldpreview functionality"""
-        return bool(self.hothash)  # Any photo with a hash can potentially have coldpreview
-    
-    @property
-    def coldpreview_dimensions(self) -> Optional[tuple]:
-        """Get coldpreview dimensions as (width, height) tuple or None"""
-        if self.coldpreview_width and self.coldpreview_height:
-            return (self.coldpreview_width, self.coldpreview_height)
-        return None
-
-
 @dataclass
 class Author:
     """Author data model"""

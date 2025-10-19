@@ -201,10 +201,10 @@ class GalleryView(QWidget):
     
     def on_thumbnail_clicked(self, photo):
         """Handle thumbnail click"""
-        # Open photo detail view
+        # Open photo detail view as independent window
         from .photo_detail import PhotoDetailDialog
         dialog = PhotoDetailDialog(photo, self.api_client, self)
-        dialog.exec()
+        dialog.show()  # Show as independent window (not modal)
     
     def search_photos(self):
         """Perform photo search"""
