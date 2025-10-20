@@ -10,7 +10,8 @@ from PIL import Image
 from pathlib import Path
 import hashlib
 
-from .models import Photo, PaginatedResponse, PhotoSearchRequest, PhotoUpdateRequest, ImportSession, FileStorage
+from .models import (Photo, PaginatedResponse, PhotoSearchRequest, PhotoUpdateRequest, 
+                     ImportSession, FileStorage, PhotoStack)
 
 
 def generate_hotpreview_and_hash(file_path: str) -> Tuple[bytes, str, str]:
@@ -615,3 +616,196 @@ class ImaLinkClient:
         )
         response.raise_for_status()
         return ImportSession(**response.json())
+    
+    # === Photo Stack Methods ===
+    
+    def get_photo_stacks(self, offset: int = 0, limit: int = 50) -> dict:
+        """Get all photo stacks with pagination
+        
+        Args:
+            offset: Number of stacks to skip
+            limit: Maximum number of stacks to return
+            
+        Returns:
+            Dict with 'data' (list of PhotoStack) and 'meta' (pagination info)
+        """
+        from .models import PhotoStack
+        
+        response = self.session.get(
+            f"{self.base_url}/photo-stacks",
+            params={"offset": offset, "limit": limit}
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        # Convert data items to PhotoStack objects
+        if "data" in data:
+            data["data"] = [PhotoStack(**item) for item in data["data"]]
+        
+        return data
+    
+    def get_photo_stack(self, stack_id: int) -> 'PhotoStack':
+        """Get a specific photo stack by ID
+        
+        Args:
+            stack_id: The stack's ID
+            
+        Returns:
+            PhotoStack object with full details including photo_hothashes list
+        """
+        from .models import PhotoStack
+        
+        response = self.session.get(
+            f"{self.base_url}/photo-stacks/{stack_id}"
+        )
+        response.raise_for_status()
+        return PhotoStack(**response.json())
+    
+    def create_photo_stack(self, description: str = None, stack_type: str = None, 
+                          cover_photo_hothash: str = None) -> dict:
+        """Create a new photo stack
+        
+        Args:
+            description: Optional description of the stack
+            stack_type: Optional type (e.g., "album", "panorama", "burst", "hdr")
+            cover_photo_hothash: Optional hothash of the cover photo
+            
+        Returns:
+            Dict with 'success', 'message', and 'stack' (PhotoStack object)
+        """
+        from .models import PhotoStack
+        
+        payload = {}
+        if description:
+            payload["description"] = description
+        if stack_type:
+            payload["stack_type"] = stack_type
+        if cover_photo_hothash:
+            payload["cover_photo_hothash"] = cover_photo_hothash
+        
+        response = self.session.post(
+            f"{self.base_url}/photo-stacks",
+            json=payload
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        # Convert stack to PhotoStack object
+        if "stack" in result and result["stack"]:
+            result["stack"] = PhotoStack(**result["stack"])
+        
+        return result
+    
+    def update_photo_stack(self, stack_id: int, description: str = None, 
+                          stack_type: str = None, cover_photo_hothash: str = None) -> dict:
+        """Update an existing photo stack
+        
+        Args:
+            stack_id: The stack's ID
+            description: Optional new description
+            stack_type: Optional new type
+            cover_photo_hothash: Optional new cover photo hothash
+            
+        Returns:
+            Dict with 'success', 'message', and 'stack' (PhotoStack object)
+        """
+        from .models import PhotoStack
+        
+        payload = {}
+        if description is not None:
+            payload["description"] = description
+        if stack_type is not None:
+            payload["stack_type"] = stack_type
+        if cover_photo_hothash is not None:
+            payload["cover_photo_hothash"] = cover_photo_hothash
+        
+        response = self.session.put(
+            f"{self.base_url}/photo-stacks/{stack_id}",
+            json=payload
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        # Convert stack to PhotoStack object
+        if "stack" in result and result["stack"]:
+            result["stack"] = PhotoStack(**result["stack"])
+        
+        return result
+    
+    def delete_photo_stack(self, stack_id: int) -> dict:
+        """Delete a photo stack
+        
+        Note: This does NOT delete the photos themselves, only the stack grouping
+        
+        Args:
+            stack_id: The stack's ID
+            
+        Returns:
+            Dict with 'success' and 'message'
+        """
+        response = self.session.delete(
+            f"{self.base_url}/photo-stacks/{stack_id}"
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def add_photo_to_stack(self, stack_id: int, photo_hothash: str) -> dict:
+        """Add a photo to a stack
+        
+        If the photo is already in another stack, it will be moved to this stack
+        (each photo can only belong to one stack at a time)
+        
+        Args:
+            stack_id: The stack's ID
+            photo_hothash: The photo's hothash
+            
+        Returns:
+            Dict with 'success', 'message', and 'stack' (summary with photo_count)
+        """
+        response = self.session.post(
+            f"{self.base_url}/photo-stacks/{stack_id}/photo",
+            json={"photo_hothash": photo_hothash}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def remove_photo_from_stack(self, stack_id: int, photo_hothash: str) -> dict:
+        """Remove a photo from a stack
+        
+        Args:
+            stack_id: The stack's ID
+            photo_hothash: The photo's hothash
+            
+        Returns:
+            Dict with 'success', 'message', and 'stack' (summary with photo_count)
+        """
+        response = self.session.delete(
+            f"{self.base_url}/photo-stacks/{stack_id}/photo/{photo_hothash}"
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def find_stacks_for_photo(self, photo_hothash: str) -> dict:
+        """Find which stack(s) contain a specific photo
+        
+        Note: Due to one-to-many relationship, a photo can only be in one stack max
+        
+        Args:
+            photo_hothash: The photo's hothash
+            
+        Returns:
+            Dict with 'data' (list of PhotoStack) and 'meta' (pagination info)
+        """
+        from .models import PhotoStack
+        
+        response = self.session.get(
+            f"{self.base_url}/photo-stacks/photo/{photo_hothash}/stacks"
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        # Convert data items to PhotoStack objects
+        if "data" in data:
+            data["data"] = [PhotoStack(**item) for item in data["data"]]
+        
+        return data

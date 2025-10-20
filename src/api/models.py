@@ -138,3 +138,33 @@ class PhotoUpdateRequest:
     rating: Optional[int] = None
     location: Optional[str] = None
     tags: Optional[List[str]] = None
+
+
+@dataclass
+class PhotoStack:
+    """Photo stack data model - organizes photos into collections"""
+    id: int
+    description: Optional[str] = None
+    stack_type: Optional[str] = None  # e.g., "album", "panorama", "burst", "hdr"
+    cover_photo_hothash: Optional[str] = None
+    photo_hothashes: List[str] = field(default_factory=list)
+    photo_count: int = 0
+    user_id: Optional[int] = None  # Owner of the stack
+    created_at: Optional[str] = None  # ISO 8601 timestamp
+    updated_at: Optional[str] = None  # ISO 8601 timestamp
+
+
+@dataclass
+class PhotoStackCreateRequest:
+    """Request body for creating a photo stack"""
+    description: Optional[str] = None
+    stack_type: Optional[str] = None
+    cover_photo_hothash: Optional[str] = None
+
+
+@dataclass
+class PhotoStackUpdateRequest:
+    """Request body for updating a photo stack"""
+    description: Optional[str] = None
+    stack_type: Optional[str] = None
+    cover_photo_hothash: Optional[str] = None
