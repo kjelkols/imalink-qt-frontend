@@ -80,7 +80,7 @@ def generate_coldpreview(file_path: str, max_size: int = 1200) -> bytes:
 
 
 class ImaLinkClient:
-    """HTTP client for ImaLink API"""
+    """HTTP client for ImaLink API with authentication support"""
     
     def __init__(self, base_url: str = "http://localhost:8000/api/v1"):
         self.base_url = base_url
@@ -88,6 +88,82 @@ class ImaLinkClient:
         self.session.headers.update({
             "Content-Type": "application/json"
         })
+        self._token: Optional[str] = None
+    
+    def set_token(self, token: str) -> None:
+        """
+        Set JWT authentication token for all subsequent requests
+        
+        Args:
+            token: JWT Bearer token
+        """
+        self._token = token
+        self.session.headers.update({
+            "Authorization": f"Bearer {token}"
+        })
+    
+    def clear_token(self) -> None:
+        """Remove authentication token"""
+        self._token = None
+        if "Authorization" in self.session.headers:
+            del self.session.headers["Authorization"]
+    
+    # ============================================================================
+    # Authentication Endpoints
+    # ============================================================================
+    
+    def login(self, username: str, password: str) -> dict:
+        """
+        Login user and get JWT token
+        
+        Args:
+            username: User's username
+            password: User's password
+            
+        Returns:
+            Dict with 'access_token' and 'user' data
+        """
+        response = self.session.post(
+            f"{self.base_url}/auth/login",
+            json={"username": username, "password": password}
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        # Automatically set token for future requests
+        if 'access_token' in data:
+            self.set_token(data['access_token'])
+        
+        return data
+    
+    def register(self, username: str, email: str, password: str, display_name: str) -> dict:
+        """
+        Register a new user
+        
+        Args:
+            username: Unique username
+            email: User's email
+            password: User's password
+            display_name: User's display name
+            
+        Returns:
+            Dict with user data
+        """
+        response = self.session.post(
+            f"{self.base_url}/auth/register",
+            json={
+                "username": username,
+                "email": email,
+                "password": password,
+                "display_name": display_name
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    # ============================================================================
+    # Photo Endpoints
+    # ============================================================================
     
     def get_photos(self, skip: int = 0, limit: int = 100) -> List[Photo]:
         """Get paginated list of photos"""
@@ -197,16 +273,25 @@ class ImaLinkClient:
         response.raise_for_status()
         return Photo(**response.json())
     
-    def import_image(self, file_path: str, session_id: int = None) -> dict:
-        """Import a single image file with EXIF metadata extraction
+    def import_new_photo(self, file_path: str, session_id: int = None) -> dict:
+        """
+        Import a new unique photo (creates new Photo object)
+        
+        Endpoint: POST /image-files/new-photo
         
         Extracts and sends:
+        - hotpreview: 150x150 JPEG thumbnail (required)
         - taken_at: Timestamp when photo was taken (from EXIF)
         - gps_latitude: GPS latitude in decimal degrees (from EXIF)
         - gps_longitude: GPS longitude in decimal degrees (from EXIF)
         - exif_dict: Complete EXIF metadata dictionary
         
-        Backend stores these as separate fields for easy querying.
+        Args:
+            file_path: Path to image file
+            session_id: Optional import session ID
+            
+        Returns:
+            API response with photo and image file data
         """
         from ..utils.exif_extractor import (
             extract_exif_dict, 
@@ -216,13 +301,11 @@ class ImaLinkClient:
         
         path = Path(file_path)
         
-        # Generate hotpreview and hothash using shared function
+        # Generate hotpreview and hothash
         _, hotpreview_b64, hothash = generate_hotpreview_and_hash(file_path)
         
-        # Extract EXIF metadata as JSON
+        # Extract EXIF metadata
         exif_dict = extract_exif_dict(file_path)
-        
-        # Extract critical fields that backend needs directly
         taken_at = extract_taken_at(file_path)
         gps_latitude, gps_longitude = extract_gps_coordinates(file_path)
         
@@ -230,16 +313,14 @@ class ImaLinkClient:
         payload = {
             "filename": path.name,
             "file_size": path.stat().st_size,
-            "file_path": str(path.absolute()),
-            "hotpreview": hotpreview_b64,
-            "exif_dict": exif_dict,  # Complete EXIF dictionary for display
+            "hotpreview": hotpreview_b64,  # REQUIRED for new photo
+            "exif_dict": exif_dict,
         }
         
-        # Add taken_at in ISO 8601 format (required by backend)
+        # Add optional fields
         if taken_at:
-            payload["taken_at"] = taken_at  # Already in ISO 8601 from extract_taken_at()
+            payload["taken_at"] = taken_at
         
-        # Add GPS coordinates as decimal degrees (required by backend)
         if gps_latitude is not None and gps_longitude is not None:
             payload["gps_latitude"] = gps_latitude
             payload["gps_longitude"] = gps_longitude
@@ -249,19 +330,18 @@ class ImaLinkClient:
         
         # Debug logging
         print(f"\n{'='*60}")
-        print(f"📤 Sending to backend: {path.name}")
+        print(f"📤 NEW PHOTO: {path.name}")
         print(f"{'='*60}")
         print(f"  filename: {payload['filename']}")
         print(f"  file_size: {payload['file_size']}")
         print(f"  taken_at: {payload.get('taken_at', 'NOT SENT')}")
-        print(f"  gps_latitude: {payload.get('gps_latitude', 'NOT SENT')}")
-        print(f"  gps_longitude: {payload.get('gps_longitude', 'NOT SENT')}")
+        print(f"  gps: {payload.get('gps_latitude', 'N/A')}, {payload.get('gps_longitude', 'N/A')}")
         print(f"  exif_dict fields: {len(exif_dict)}")
         print(f"  hotpreview length: {len(hotpreview_b64)}")
         print(f"{'='*60}\n")
         
         response = self.session.post(
-            f"{self.base_url}/image-files/",
+            f"{self.base_url}/image-files/new-photo",  # NEW endpoint
             json=payload
         )
         response.raise_for_status()
@@ -272,6 +352,70 @@ class ImaLinkClient:
             result['data']['hothash'] = hothash
         else:
             result['hothash'] = hothash
+        
+        return result
+    
+    def add_companion_file(self, file_path: str, photo_hothash: str, session_id: int = None) -> dict:
+        """
+        Add a companion file (RAW, PSD, etc.) to an existing Photo
+        
+        Endpoint: POST /image-files/add-to-photo
+        
+        NO hotpreview needed - photo already exists!
+        
+        Args:
+            file_path: Path to companion file
+            photo_hothash: Hothash of existing Photo to add this file to
+            session_id: Optional import session ID
+            
+        Returns:
+            API response with image file data
+        """
+        from ..utils.exif_extractor import extract_exif_dict
+        
+        path = Path(file_path)
+        
+        # Extract EXIF (for metadata display, not for Photo creation)
+        exif_dict = extract_exif_dict(file_path)
+        
+        # Prepare payload
+        payload = {
+            "filename": path.name,
+            "photo_hothash": photo_hothash,  # Link to existing photo
+            "file_size": path.stat().st_size,
+            "exif_dict": exif_dict,
+            # NO hotpreview - photo already exists!
+        }
+        
+        if session_id:
+            payload["import_session_id"] = session_id
+        
+        # Debug logging
+        print(f"\n{'='*60}")
+        print(f"📎 COMPANION FILE: {path.name}")
+        print(f"{'='*60}")
+        print(f"  photo_hothash: {photo_hothash}")
+        print(f"  filename: {payload['filename']}")
+        print(f"  file_size: {payload['file_size']}")
+        print(f"  exif_dict fields: {len(exif_dict)}")
+        print(f"{'='*60}\n")
+        
+        response = self.session.post(
+            f"{self.base_url}/image-files/add-to-photo",  # NEW endpoint for companions
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    # Legacy method for backward compatibility
+    def import_image(self, file_path: str, session_id: int = None) -> dict:
+        """
+        DEPRECATED: Use import_new_photo() instead
+        
+        Legacy method that defaults to importing as new photo.
+        Kept for backward compatibility with existing code.
+        """
+        return self.import_new_photo(file_path, session_id)
             
         return result
     

@@ -2,8 +2,9 @@
 Main application window
 """
 
+import sys
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                               QMenuBar, QToolBar, QStatusBar, QTabWidget, QMessageBox, QLabel)
+                               QMenuBar, QToolBar, QStatusBar, QTabWidget, QMessageBox, QLabel, QDialog)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction
 
@@ -11,7 +12,9 @@ from .gallery_view import GalleryView
 from .import_dialog import ImportDialog
 from .import_view import ImportView
 from .stats_view import StatsView
+from .login_dialog import LoginDialog
 from ..api.client import ImaLinkClient
+from ..auth import AuthManager
 import requests
 import subprocess
 
@@ -107,9 +110,18 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        
         # Auto-detect API URL (try localhost first, then Windows IP)
         api_url = self._detect_api_url()
         self.api_client = ImaLinkClient(base_url=api_url)
+        
+        # Initialize auth manager
+        self.auth_manager = AuthManager()
+        
+        # Check authentication before showing UI
+        if not self.check_authentication():
+            # User cancelled login or auth failed
+            sys.exit(0)
         
         self.init_ui()
         self.setup_menus()
@@ -118,6 +130,81 @@ class MainWindow(QMainWindow):
         
         # Run health check after UI is ready
         QTimer.singleShot(1000, self._run_health_check)
+    
+    def check_authentication(self) -> bool:
+        """
+        Check if user is authenticated
+        Shows login dialog if not authenticated
+        
+        Returns:
+            True if authenticated, False if user cancelled
+        """
+        # Try to load saved auth
+        if self.auth_manager.load_auth():
+            # Valid token found
+            self.api_client.set_token(self.auth_manager.token)
+            self.statusBar().showMessage(f"Logged in as {self.auth_manager.user.display_name}")
+            return True
+        
+        # No valid auth - show login dialog
+        return self.show_login_dialog()
+    
+    def show_login_dialog(self) -> bool:
+        """
+        Show login dialog
+        
+        Returns:
+            True if login successful, False if cancelled
+        """
+        login_dialog = LoginDialog(self.api_client, self)
+        
+        # Connect success signal
+        login_dialog.login_success.connect(self.on_login_success)
+        
+        result = login_dialog.exec()
+        
+        if result == QDialog.Accepted:
+            # Save auth if user checked "remember me"
+            remember_me = login_dialog.get_remember_me()
+            self.auth_manager.save_auth(remember_me)
+            return True
+        else:
+            # User cancelled login
+            return False
+    
+    def on_login_success(self, token: str, user_data: dict):
+        """Handle successful login"""
+        # Update auth manager
+        self.auth_manager.set_auth(token, user_data)
+        
+        # Update API client
+        self.api_client.set_token(token)
+        
+        # Update status bar
+        user_name = user_data.get('display_name', user_data.get('username', 'User'))
+        self.statusBar().showMessage(f"✅ Logged in as {user_name}")
+        
+        print(f"✅ Login successful: {user_name}")
+    
+    def on_logout(self):
+        """Handle logout action"""
+        reply = QMessageBox.question(
+            self,
+            "Logg ut",
+            "Er du sikker på at du vil logge ut?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Clear auth
+            self.auth_manager.logout()
+            self.api_client.clear_token()
+            
+            # Show login dialog again
+            if not self.show_login_dialog():
+                # User cancelled - exit app
+                sys.exit(0)
     
     def init_ui(self):
         """Initialize the user interface"""
@@ -158,6 +245,13 @@ class MainWindow(QMainWindow):
         import_action.setShortcut('Ctrl+I')
         import_action.triggered.connect(self.show_import_dialog)
         file_menu.addAction(import_action)
+        
+        file_menu.addSeparator()
+        
+        # User menu items
+        logout_action = QAction('&Logg ut', self)
+        logout_action.triggered.connect(self.on_logout)
+        file_menu.addAction(logout_action)
         
         file_menu.addSeparator()
         
