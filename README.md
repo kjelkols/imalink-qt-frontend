@@ -25,8 +25,6 @@ This means:
 - ✅ Easy to add/remove/relocate storage locations
 - ✅ Support for external drives and network storage
 
-See [`STORAGE_ARCHITECTURE.md`](STORAGE_ARCHITECTURE.md) for details.
-
 ## Development Environment
 
 **Important Development Notes:**
@@ -76,13 +74,15 @@ imalink-qt-frontend/
 ├── main.py                 # Application entry point
 ├── requirements.txt        # Python dependencies (install with uv)
 ├── README.md              # Project documentation
-├── DEVELOPMENT.md         # Critical development information (READ FIRST!)
+├── LICENSE                # Project license
 │
 ├── src/
 │   ├── api/               # Backend communication
+│   ├── auth/              # Authentication management
+│   ├── models/            # Data models
+│   ├── storage/           # Local storage management
 │   ├── ui/                # UI components
-│   ├── models/            # Qt models (MVC)
-│   └── utils/             # Utility functions
+│   └── utils/             # Utility functions (EXIF, cache, image utils)
 │
 └── resources/
     ├── icons/
@@ -98,18 +98,14 @@ The application connects to the backend API at `http://localhost:8000/api/v1` by
 - Update `base_url` in `src/api/client.py` if needed
 - Example: `http://172.20.10.2:8000/api/v1`
 
-## Documentation
+## Authentication
 
-**⚠️ IMPORTANT: Read `DEVELOPMENT.md` first for critical development information!**
+The application uses JWT-based authentication:
+- Login dialog on first startup
+- "Remember me" option to save credentials securely
+- Token-based API communication
+- Logout functionality available in menu
 
-### Local Documentation
-- **Storage Architecture**: [`STORAGE_ARCHITECTURE.md`](STORAGE_ARCHITECTURE.md) - How frontend manages storage locations
-- **API Reference**: [`API_REFERENCE.md`](API_REFERENCE.md) - Backend API endpoints (FileStorage deprecated)
-- **Import Storage Integration**: [`IMPORT_STORAGE_INTEGRATION.md`](IMPORT_STORAGE_INTEGRATION.md) - Import workflow
+## License
 
-### Backend Documentation
-For comprehensive backend documentation, see:
-- **Backend API Reference**: [Backend Repository - API_REFERENCE.md](https://github.com/kjelkols/imalink/blob/main/API_REFERENCE.md)
-- **EXIF Extraction Guide**: [Backend Repository - FRONTEND_EXIF_EXTRACTION_GUIDE.md](https://github.com/kjelkols/imalink/blob/main/docs/FRONTEND_EXIF_EXTRACTION_GUIDE.md)
-
-## Development
+See [LICENSE](LICENSE) file for details.
