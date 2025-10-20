@@ -132,7 +132,7 @@ class ImaLinkClient:
             Dict with 'access_token' and 'user' data
         """
         response = self.session.post(
-            f"{self.base_url}/auth/login",
+            f"{self.base_url}/auth/login",  # Auth is at /api/v1/auth/
             json={"username": username, "password": password}
         )
         response.raise_for_status()
@@ -168,7 +168,7 @@ class ImaLinkClient:
         print(f"🔧 DEBUG API register: URL = {self.base_url}/auth/register")
         
         response = self.session.post(
-            f"{self.base_url}/auth/register",
+            f"{self.base_url}/auth/register",  # Auth is at /api/v1/auth/
             json=payload
         )
         
@@ -182,11 +182,11 @@ class ImaLinkClient:
     # Photo Endpoints
     # ============================================================================
     
-    def get_photos(self, skip: int = 0, limit: int = 100) -> List[Photo]:
+    def get_photos(self, offset: int = 0, limit: int = 100) -> List[Photo]:
         """Get paginated list of photos"""
         response = self.session.get(
             f"{self.base_url}/photos/",
-            params={"skip": skip, "limit": limit}
+            params={"offset": offset, "limit": limit}
         )
         response.raise_for_status()
         data = response.json()
@@ -579,11 +579,11 @@ class ImaLinkClient:
             payload["description"] = description
         
         # DEBUG: Show payload being sent
-        print(f"🔧 DEBUG API: Sending POST to /import_sessions/ with payload: {payload}")
+        print(f"🔧 DEBUG API: Sending POST to /import-sessions/ with payload: {payload}")
         print(f"🔧 DEBUG API: Authorization header present: {bool(self._token)}")
         
         response = self.session.post(
-            f"{self.base_url}/import_sessions/",
+            f"{self.base_url}/import-sessions/",
             json=payload
         )
         response.raise_for_status()
@@ -602,7 +602,7 @@ class ImaLinkClient:
             List of ImportSession objects
         """
         response = self.session.get(
-            f"{self.base_url}/import_sessions/",
+            f"{self.base_url}/import-sessions/",
             params={"limit": limit, "offset": offset}
         )
         response.raise_for_status()
@@ -619,7 +619,7 @@ class ImaLinkClient:
             ImportSession object
         """
         response = self.session.get(
-            f"{self.base_url}/import_sessions/{import_id}"
+            f"{self.base_url}/import-sessions/{import_id}"
         )
         response.raise_for_status()
         return ImportSession(**response.json())

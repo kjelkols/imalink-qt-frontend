@@ -116,7 +116,7 @@ class PaginatedResponse:
     """Paginated response wrapper"""
     items: List[Photo]
     total: int
-    skip: int
+    offset: int  # Changed from 'skip' to match backend API
     limit: int
 
 
