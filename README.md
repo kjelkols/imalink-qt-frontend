@@ -106,6 +106,27 @@ The application uses JWT-based authentication:
 - Token-based API communication
 - Logout functionality available in menu
 
+## Backend Documentation
+
+This frontend connects to the **ImaLink FastAPI backend**. Backend documentation is always kept up-to-date on GitHub:
+
+### 📚 Essential Backend References
+
+- **[API Reference](https://github.com/kjelkols/imalink/blob/main/docs/API_REFERENCE.md)** - Complete REST API v2.1 documentation
+  - All endpoints, request/response formats
+  - Authentication flow
+  - Error handling
+  
+- **[Frontend Integration Guide](https://github.com/kjelkols/imalink/blob/main/docs/FRONTEND_INTEGRATION.md)** - Integration patterns and examples
+  - TypeScript/JavaScript examples
+  - Authentication flow
+  - Upload patterns
+  - Error handling strategies
+
+**Backend Repository:** https://github.com/kjelkols/imalink
+
+> **Note:** Backend documentation on GitHub is always the source of truth. During active development, the backend API may change frequently - always check these documents for the latest API contracts.
+
 ## License
 
 See [LICENSE](LICENSE) file for details.

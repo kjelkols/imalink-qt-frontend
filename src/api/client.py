@@ -1,5 +1,12 @@
 """
 Main API client for ImaLink backend communication
+
+Backend Documentation (always up-to-date on GitHub):
+- API Reference: https://github.com/kjelkols/imalink/blob/main/docs/API_REFERENCE.md
+- Frontend Integration: https://github.com/kjelkols/imalink/blob/main/docs/FRONTEND_INTEGRATION.md
+
+Note: During active development, backend API may change frequently.
+Always refer to GitHub docs for latest API contracts.
 """
 
 import requests
