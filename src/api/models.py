@@ -31,15 +31,20 @@ class FileStorage:
 
 @dataclass
 class ImportSession:
-    """Import session data model"""
+    """Import session data model - updated for v2.0 API"""
     id: int
-    imported_at: str
-    title: Optional[str] = None
+    name: Optional[str] = None  # Renamed from title
+    source_path: Optional[str] = None  # Renamed from storage_location
     description: Optional[str] = None
-    storage_location: Optional[str] = None
-    file_storage_id: Optional[int] = None  # FK to FileStorage
-    storage_uuid: Optional[str] = None  # Direct UUID reference
-    default_author_id: Optional[int] = None
+    user_id: Optional[int] = None  # User ownership (backend sets this from JWT)
+    created_at: Optional[str] = None  # ISO 8601 timestamp
+    updated_at: Optional[str] = None  # ISO 8601 timestamp
+    default_author_id: Optional[int] = None  # Default author for imports
+    
+    # Legacy fields for backward compatibility
+    title: Optional[str] = None  # Deprecated: use name
+    storage_location: Optional[str] = None  # Deprecated: use source_path
+    imported_at: Optional[str] = None  # Deprecated: use created_at
     images_count: int = 0
 
 

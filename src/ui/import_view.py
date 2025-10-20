@@ -181,6 +181,9 @@ class ImportView(QWidget):
         self.storage_manager = SimpleStorageManager()  # Use simple fixed storage
         self.storage_path = self.storage_manager.get_storage_path()  # Fixed storage path
         
+        # DEBUG: Verify new code is loaded
+        print("🔧 DEBUG: ImportView initialized (user_id from JWT token)")
+        
         self.setup_ui()
         self.load_import_sessions()
     
@@ -337,14 +340,20 @@ class ImportView(QWidget):
         folder_path = Path(folder)
         
         # Create session name from folder and timestamp
-        session_title = f"{folder_path.name} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        session_name = f"{folder_path.name} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         
         try:
-            # Create import session in backend
+            # DEBUG: Show what we're sending
+            print(f"🔧 DEBUG: Creating import session (user_id from JWT token)")
+            
+            # Create import session in backend (user_id extracted from JWT by backend)
             import_session = self.api_client.create_import_session(
-                title=session_title,
-                storage_location=str(self.storage_path)
+                name=session_name,
+                source_path=str(self.storage_path),
+                description=f"Import from {folder_path.name}"
             )
+            
+            print(f"🔧 DEBUG: Import session created successfully: {import_session.id}")
             
             # Add to list
             self.add_session_to_list(import_session)
@@ -355,7 +364,7 @@ class ImportView(QWidget):
             # Start import worker with fixed storage path
             self.start_import_worker(
                 folder_path, 
-                session_title, 
+                session_name,  # Fixed: use session_name instead of session_title
                 import_session.id, 
                 None,  # storage_uuid (not used)
                 str(self.storage_path)  # Fixed storage path

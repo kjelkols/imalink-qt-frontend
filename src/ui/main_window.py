@@ -119,10 +119,13 @@ class MainWindow(QMainWindow):
         self.auth_manager = AuthManager()
         
         # Check authentication before showing UI
+        print("🔧 DEBUG MainWindow: Checking authentication...")
         if not self.check_authentication():
             # User cancelled login or auth failed
+            print("🔧 DEBUG MainWindow: Authentication failed or cancelled - exiting")
             sys.exit(0)
         
+        print("🔧 DEBUG MainWindow: Authentication successful - initializing UI")
         self.init_ui()
         self.setup_menus()
         # self.setup_toolbar()  # Disabled to avoid duplicate buttons
@@ -140,13 +143,16 @@ class MainWindow(QMainWindow):
             True if authenticated, False if user cancelled
         """
         # Try to load saved auth
+        print("🔧 DEBUG check_authentication: Attempting to load saved auth...")
         if self.auth_manager.load_auth():
             # Valid token found
+            print(f"🔧 DEBUG check_authentication: Valid token found for user {self.auth_manager.user.username}")
             self.api_client.set_token(self.auth_manager.token)
             self.statusBar().showMessage(f"Logged in as {self.auth_manager.user.display_name}")
             return True
         
         # No valid auth - show login dialog
+        print("🔧 DEBUG check_authentication: No valid auth - showing login dialog")
         return self.show_login_dialog()
     
     def show_login_dialog(self) -> bool:
@@ -156,20 +162,25 @@ class MainWindow(QMainWindow):
         Returns:
             True if login successful, False if cancelled
         """
+        print("🔧 DEBUG show_login_dialog: Creating LoginDialog...")
         login_dialog = LoginDialog(self.api_client, self)
         
         # Connect success signal
         login_dialog.login_success.connect(self.on_login_success)
         
+        print("🔧 DEBUG show_login_dialog: Showing dialog (exec)...")
         result = login_dialog.exec()
         
+        print(f"🔧 DEBUG show_login_dialog: Dialog result: {result}")
         if result == QDialog.Accepted:
             # Save auth if user checked "remember me"
             remember_me = login_dialog.get_remember_me()
+            print(f"🔧 DEBUG show_login_dialog: Saving auth (remember_me={remember_me})")
             self.auth_manager.save_auth(remember_me)
             return True
         else:
             # User cancelled login
+            print("🔧 DEBUG show_login_dialog: User cancelled")
             return False
     
     def on_login_success(self, token: str, user_data: dict):

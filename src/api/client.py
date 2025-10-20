@@ -149,15 +149,24 @@ class ImaLinkClient:
         Returns:
             Dict with user data
         """
+        payload = {
+            "username": username,
+            "email": email,
+            "password": password,
+            "display_name": display_name
+        }
+        
+        print(f"🔧 DEBUG API register: Payload = {payload}")
+        print(f"🔧 DEBUG API register: URL = {self.base_url}/auth/register")
+        
         response = self.session.post(
             f"{self.base_url}/auth/register",
-            json={
-                "username": username,
-                "email": email,
-                "password": password,
-                "display_name": display_name
-            }
+            json=payload
         )
+        
+        print(f"🔧 DEBUG API register: Status code = {response.status_code}")
+        print(f"🔧 DEBUG API register: Response text = {response.text}")
+        
         response.raise_for_status()
         return response.json()
     
@@ -539,34 +548,39 @@ class ImaLinkClient:
     
     # === Import Session Methods ===
     
-    def create_import_session(self, title: str = None, storage_location: str = None,
-                            description: str = None, default_author_id: int = None) -> ImportSession:
+    def create_import_session(self, name: str = None, source_path: str = None,
+                            description: str = None) -> ImportSession:
         """Create a new import session
         
+        Backend automatically extracts user_id from JWT token - DO NOT send it!
+        
         Args:
-            title: User's title for this import (e.g., 'Italy Summer 2024')
-            storage_location: Where files are stored (e.g., '/home/user/photos/italy')
+            name: User's title for this import (e.g., 'Italy Summer 2024')
+            source_path: Where files are stored (e.g., '/home/user/photos/italy')
             description: User's notes about this import
-            default_author_id: Default photographer for this batch
             
         Returns:
             ImportSession object with id
         """
         payload = {}
-        if title:
-            payload["title"] = title
-        if storage_location:
-            payload["storage_location"] = storage_location
+        if name:
+            payload["name"] = name
+        if source_path:
+            payload["source_path"] = source_path
         if description:
             payload["description"] = description
-        if default_author_id:
-            payload["default_author_id"] = default_author_id
+        
+        # DEBUG: Show payload being sent
+        print(f"🔧 DEBUG API: Sending POST to /import_sessions/ with payload: {payload}")
+        print(f"🔧 DEBUG API: Authorization header present: {bool(self._token)}")
         
         response = self.session.post(
             f"{self.base_url}/import_sessions/",
             json=payload
         )
         response.raise_for_status()
+        
+        print(f"🔧 DEBUG API: Import session created, response: {response.json()}")
         return ImportSession(**response.json())
     
     def get_import_sessions(self, limit: int = 100, offset: int = 0) -> List[ImportSession]:

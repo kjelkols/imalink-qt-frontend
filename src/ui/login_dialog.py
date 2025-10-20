@@ -232,40 +232,51 @@ class LoginDialog(QDialog):
     
     def on_register(self):
         """Handle register button click"""
+        print("🔧 DEBUG LoginDialog: on_register called")
         username = self.reg_username.text().strip()
         email = self.reg_email.text().strip()
         display_name = self.reg_display_name.text().strip()
         password = self.reg_password.text()
         confirm = self.reg_confirm_password.text()
         
+        print(f"🔧 DEBUG LoginDialog: Registration data - username={username}, email={email}, display_name={display_name}")
+        
         # Validation
         if not username or not email or not display_name or not password:
+            print("🔧 DEBUG LoginDialog: Validation failed - missing fields")
             self.show_error("Vennligst fyll inn alle feltene")
             return
         
         if password != confirm:
+            print("🔧 DEBUG LoginDialog: Validation failed - passwords don't match")
             self.show_error("Passordene matcher ikke")
             return
         
         if len(password) < 6:
+            print("🔧 DEBUG LoginDialog: Validation failed - password too short")
             self.show_error("Passordet må være minst 6 tegn")
             return
         
         if "@" not in email or "." not in email:
+            print("🔧 DEBUG LoginDialog: Validation failed - invalid email")
             self.show_error("Ugyldig e-postadresse")
             return
         
+        print("🔧 DEBUG LoginDialog: Validation passed - calling API register...")
         self.status_label.setText("Oppretter bruker...")
         self.status_label.setStyleSheet("color: #1976d2;")
         
         try:
             # Call API client register method
+            print(f"🔧 DEBUG LoginDialog: Calling api_client.register...")
             response = self.api_client.register(
                 username=username,
                 email=email,
                 password=password,
                 display_name=display_name
             )
+            
+            print(f"🔧 DEBUG LoginDialog: Registration successful! Response: {response}")
             
             # Show success message
             QMessageBox.information(
@@ -274,6 +285,7 @@ class LoginDialog(QDialog):
                 f"Brukeren '{username}' er nå opprettet!\n\nDu kan nå logge inn med ditt brukernavn og passord."
             )
             
+            print("🔧 DEBUG LoginDialog: Switching to login tab...")
             # Switch to login tab and pre-fill username
             self.login_username.setText(username)
             self.login_password.setFocus()
@@ -286,6 +298,7 @@ class LoginDialog(QDialog):
             self.status_label.setText("")
             
         except Exception as e:
+            print(f"🔧 DEBUG LoginDialog: Registration failed with exception: {type(e).__name__}: {e}")
             error_msg = str(e)
             if "409" in error_msg or "already exists" in error_msg.lower():
                 self.show_error("Brukernavnet er allerede tatt")
