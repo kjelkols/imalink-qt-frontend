@@ -1,3 +1,1 @@
-"""
-UI components package
-"""
+"""UI module for application interface"""

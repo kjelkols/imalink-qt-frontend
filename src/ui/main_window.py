@@ -1,403 +1,345 @@
-"""
-Main application window
-"""
-
-import sys
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                               QMenuBar, QToolBar, QStatusBar, QTabWidget, QMessageBox, QLabel, QDialog)
-from PySide6.QtCore import Qt, QTimer
+"""Main application window"""
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QStackedWidget, 
+    QMessageBox, QFrame, QSplitter, QDialog, QLabel
+)
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
-from .gallery_view import GalleryView
-from .import_dialog import ImportDialog
-from .import_view import ImportView
-from .stats_view import StatsView
+from ..storage.settings import Settings
+from ..api.client import APIClient
+from ..auth.auth_manager import AuthManager
+from .navigation import NavigationPanel
 from .login_dialog import LoginDialog
-from ..api.client import ImaLinkClient
-from ..auth import AuthManager
-import requests
-import subprocess
+from .register_dialog import RegisterDialog
+from .views.home_view import HomeView
+from .views.gallery_view import GalleryView
+from .views.import_view import ImportView
+from .views.stats_view import StatsView
 
 
 class MainWindow(QMainWindow):
-    """Main application window"""
-    
-    def _detect_api_url(self):
-        """Auto-detect whether API runs locally or on Windows"""
-        # Try localhost first
-        try:
-            response = requests.get("http://localhost:8000/api/v1/debug/status", timeout=2)
-            if response.status_code == 200:
-                print("Found API on localhost:8000")
-                return "http://localhost:8000/api/v1"
-        except:
-            pass
-        
-        # Try Windows IP from WSL
-        try:
-            # Get Windows IP (default gateway from WSL)
-            result = subprocess.run(['ip', 'route', 'show'], capture_output=True, text=True)
-            for line in result.stdout.split('\n'):
-                if 'default' in line:
-                    windows_ip = line.split()[2]
-                    windows_url = f"http://{windows_ip}:8000/api/v1"
-                    
-                    response = requests.get(f"{windows_url}/debug/status", timeout=2)
-                    if response.status_code == 200:
-                        print(f"Found API on Windows: {windows_url}")
-                        return windows_url
-        except:
-            pass
-        
-        # Fallback to localhost
-        print("API not found, using localhost:8000 as fallback")
-        return "http://localhost:8000/api/v1"
-    
-    def _run_health_check(self):
-        """Run API health check and show status"""
-        try:
-            # Test basic connectivity
-            response = requests.get(f"{self.api_client.base_url.replace('/api/v1', '')}/api/v1/debug/status", timeout=5)
-            
-            if response.status_code == 200:
-                data = response.json()
-                status_msg = f"✅ API Connected: {self.api_client.base_url}"
-                
-                # Show database status if available
-                if 'database_url' in data:
-                    db_path = data['database_url'].replace('sqlite:///', '')
-                    status_msg += f" | DB: {db_path}"
-                
-                self.statusBar().showMessage(status_msg)
-                print(f"Health check passed: {status_msg}")
-                
-                # Also test a quick database stats call
-                try:
-                    stats_response = requests.get(f"{self.api_client.base_url}/debug/database-stats", timeout=2)
-                    if stats_response.status_code == 200:
-                        stats = stats_response.json()
-                        stats_msg = f" | Photos: {stats.get('photos', 0)}, Files: {stats.get('image_files', 0)}"
-                        self.statusBar().showMessage(status_msg + stats_msg)
-                except:
-                    pass  # Stats call is optional
-                    
-            else:
-                self._show_api_error(f"API returned status {response.status_code}")
-                
-        except requests.exceptions.ConnectionError:
-            self._show_api_error("Cannot connect to API server")
-        except requests.exceptions.Timeout:
-            self._show_api_error("API server timeout")
-        except Exception as e:
-            self._show_api_error(f"Health check failed: {str(e)}")
-    
-    def _show_api_error(self, error_msg):
-        """Show API connection error"""
-        full_msg = f"❌ {error_msg}\nURL: {self.api_client.base_url}"
-        self.statusBar().showMessage(full_msg)
-        print(f"Health check failed: {full_msg}")
-        
-        # Show popup warning
-        QMessageBox.warning(
-            self, 
-            "API Connection Warning", 
-            f"{error_msg}\n\n"
-            f"API URL: {self.api_client.base_url}\n\n"
-            "Make sure the ImaLink API server is running.\n"
-            "Some features may not work until the connection is restored."
-        )
-    """Main application window"""
+    """
+    Main application window with:
+    - Menu bar (File, Help)
+    - Navigation panel (left)
+    - View stack (center)
+    - Status bar (bottom)
+    """
     
     def __init__(self):
         super().__init__()
+        self.settings = Settings()
+        self.api_client = APIClient()
+        self.auth_manager = AuthManager(self.api_client, self.settings)
         
-        # Auto-detect API URL (try localhost first, then Windows IP)
-        api_url = self._detect_api_url()
-        self.api_client = ImaLinkClient(base_url=api_url)
+        self._setup_ui()
+        self._init_views()
+        self._connect_signals()
+        self._restore_state()
         
-        # Initialize auth manager
-        self.auth_manager = AuthManager()
+        # Show home view by default
+        self.show_view('home')
         
-        # Check authentication before showing UI
-        print("🔧 DEBUG MainWindow: Checking authentication...")
-        if not self.check_authentication():
-            # User cancelled login or auth failed
-            print("🔧 DEBUG MainWindow: Authentication failed or cancelled - exiting")
-            sys.exit(0)
-        
-        print("🔧 DEBUG MainWindow: Authentication successful - initializing UI")
-        self.init_ui()
-        self.setup_menus()
-        # self.setup_toolbar()  # Disabled to avoid duplicate buttons
-        self.setup_statusbar()
-        
-        # Run health check after UI is ready
-        QTimer.singleShot(1000, self._run_health_check)
-    
-    def check_authentication(self) -> bool:
-        """
-        Check if user is authenticated
-        Shows login dialog if not authenticated
-        
-        Returns:
-            True if authenticated, False if user cancelled
-        """
-        # Try to load saved auth
-        print("🔧 DEBUG check_authentication: Attempting to load saved auth...")
-        if self.auth_manager.load_auth():
-            # Valid token found
-            print(f"🔧 DEBUG check_authentication: Valid token found for user {self.auth_manager.user.username}")
-            self.api_client.set_token(self.auth_manager.token)
-            self.statusBar().showMessage(f"Logged in as {self.auth_manager.user.display_name}")
-            return True
-        
-        # No valid auth - show login dialog
-        print("🔧 DEBUG check_authentication: No valid auth - showing login dialog")
-        return self.show_login_dialog()
-    
-    def show_login_dialog(self) -> bool:
-        """
-        Show login dialog
-        
-        Returns:
-            True if login successful, False if cancelled
-        """
-        print("🔧 DEBUG show_login_dialog: Creating LoginDialog...")
-        login_dialog = LoginDialog(self.api_client, self)
-        
-        # Connect success signal
-        login_dialog.login_success.connect(self.on_login_success)
-        
-        print("🔧 DEBUG show_login_dialog: Showing dialog (exec)...")
-        result = login_dialog.exec()
-        
-        print(f"🔧 DEBUG show_login_dialog: Dialog result: {result}")
-        if result == QDialog.Accepted:
-            # Save auth if user checked "remember me"
-            remember_me = login_dialog.get_remember_me()
-            print(f"🔧 DEBUG show_login_dialog: Saving auth (remember_me={remember_me})")
-            self.auth_manager.save_auth(remember_me)
-            return True
+        # Check if logged in, otherwise show login dialog
+        if not self.auth_manager.is_logged_in():
+            # Show "Gjest" initially
+            self.user_label.setText("👤 Gjest")
+            self._show_login()
         else:
-            # User cancelled login
-            print("🔧 DEBUG show_login_dialog: User cancelled")
-            return False
+            # Update user label if already logged in
+            user = self.auth_manager.get_user()
+            if user:
+                self._on_logged_in(user)
+            else:
+                self.user_label.setText("👤 Gjest")
     
-    def on_login_success(self, token: str, user_data: dict):
-        """Handle successful login"""
-        # Update auth manager
-        self.auth_manager.set_auth(token, user_data)
+    def _setup_ui(self):
+        """Setup main window UI"""
+        self.setWindowTitle("ImaLink")
+        self.setMinimumSize(1000, 700)
         
-        # Update API client
-        self.api_client.set_token(token)
+        # Menu bar
+        self._setup_menu()
         
-        # Update status bar
-        user_name = user_data.get('display_name', user_data.get('username', 'User'))
-        self.statusBar().showMessage(f"✅ Logged in as {user_name}")
+        # Main vertical splitter (content above, status below)
+        main_splitter = QSplitter(Qt.Vertical)
+        self.setCentralWidget(main_splitter)
         
-        print(f"✅ Login successful: {user_name}")
+        # Horizontal splitter for nav + views
+        self.content_splitter = QSplitter(Qt.Horizontal)
+        
+        # Navigation panel in frame
+        nav_frame = QFrame()
+        nav_frame.setFrameStyle(QFrame.Box | QFrame.Plain)
+        nav_frame.setLineWidth(2)
+        nav_layout = QVBoxLayout()
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_frame.setLayout(nav_layout)
+        
+        self.nav_panel = NavigationPanel()
+        nav_layout.addWidget(self.nav_panel)
+        self.content_splitter.addWidget(nav_frame)
+        
+        # View stack in frame
+        view_frame = QFrame()
+        view_frame.setFrameStyle(QFrame.Box | QFrame.Plain)
+        view_frame.setLineWidth(2)
+        view_layout = QVBoxLayout()
+        view_layout.setContentsMargins(0, 0, 0, 0)
+        view_frame.setLayout(view_layout)
+        
+        self.view_stack = QStackedWidget()
+        view_layout.addWidget(self.view_stack)
+        self.content_splitter.addWidget(view_frame)
+        
+        # Set initial horizontal splitter sizes
+        self.content_splitter.setSizes([200, 800])
+        self.content_splitter.setStretchFactor(0, 0)  # Nav panel
+        self.content_splitter.setStretchFactor(1, 1)  # View area
+        
+        # Add content splitter to main vertical splitter
+        main_splitter.addWidget(self.content_splitter)
+        
+        # Status panel in frame
+        status_frame = QFrame()
+        status_frame.setFrameStyle(QFrame.Box | QFrame.Plain)
+        status_frame.setLineWidth(2)
+        status_layout = QVBoxLayout()
+        status_layout.setContentsMargins(5, 5, 5, 5)
+        status_frame.setLayout(status_layout)
+        
+        self.status_label = QFrame()
+        self.status_label.setFrameStyle(QFrame.NoFrame)
+        status_label_layout = QVBoxLayout()
+        status_label_layout.setContentsMargins(0, 0, 0, 0)
+        self.status_label.setLayout(status_label_layout)
+        
+        from PySide6.QtWidgets import QLabel
+        self.status_text = QLabel("Ready")
+        self.status_text.setStyleSheet("padding: 5px; font-size: 12px;")
+        status_label_layout.addWidget(self.status_text)
+        
+        status_layout.addWidget(self.status_label)
+        main_splitter.addWidget(status_frame)
+        
+        # Set initial vertical splitter sizes
+        main_splitter.setSizes([600, 100])  # Content area larger, status smaller
+        main_splitter.setStretchFactor(0, 1)  # Content grows
+        main_splitter.setStretchFactor(1, 0)  # Status keeps size
+        
+        # Set splitter style for both splitters
+        splitter_style = """
+            QSplitter::handle {
+                background-color: #cccccc;
+            }
+            QSplitter::handle:horizontal {
+                width: 4px;
+            }
+            QSplitter::handle:vertical {
+                height: 4px;
+            }
+            QSplitter::handle:hover {
+                background-color: #999999;
+            }
+        """
+        self.content_splitter.setStyleSheet(splitter_style)
+        main_splitter.setStyleSheet(splitter_style)
     
-    def on_logout(self):
-        """Handle logout action"""
-        reply = QMessageBox.question(
-            self,
-            "Logg ut",
-            "Er du sikker på at du vil logge ut?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            # Clear auth
-            self.auth_manager.logout()
-            self.api_client.clear_token()
-            
-            # Show login dialog again
-            if not self.show_login_dialog():
-                # User cancelled - exit app
-                sys.exit(0)
-    
-    def init_ui(self):
-        """Initialize the user interface"""
-        self.setWindowTitle("ImaLink - Photo Manager")
-        self.setGeometry(100, 100, 1200, 800)
-        
-        # Central widget with tabs
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        layout = QVBoxLayout(central_widget)
-        
-        # Tab widget
-        self.tab_widget = QTabWidget()
-        layout.addWidget(self.tab_widget)
-        
-        # Gallery tab
-        self.gallery_view = GalleryView(self.api_client)
-        self.tab_widget.addTab(self.gallery_view, "📸 Gallery")
-        
-        # Import Dashboard tab (simplified - no storage tab needed)
-        self.import_view = ImportView(self.api_client)
-        self.import_view.photos_imported.connect(self.on_photos_imported)
-        self.tab_widget.addTab(self.import_view, "📥 Import")
-        
-        # Statistics tab
-        self.stats_view = StatsView(self.api_client)
-        self.tab_widget.addTab(self.stats_view, "📊 API Stats")
-    
-    def setup_menus(self):
-        """Setup application menus"""
+    def _setup_menu(self):
+        """Setup menu bar"""
         menubar = self.menuBar()
         
         # File menu
-        file_menu = menubar.addMenu('&File')
+        file_menu = menubar.addMenu("File")
         
-        import_action = QAction('&Import Images...', self)
-        import_action.setShortcut('Ctrl+I')
-        import_action.triggered.connect(self.show_import_dialog)
-        file_menu.addAction(import_action)
-        
-        file_menu.addSeparator()
-        
-        # User menu items
-        logout_action = QAction('&Logg ut', self)
-        logout_action.triggered.connect(self.on_logout)
+        logout_action = QAction("Logout", self)
+        logout_action.triggered.connect(self._logout)
         file_menu.addAction(logout_action)
         
         file_menu.addSeparator()
         
-        exit_action = QAction('&Exit', self)
-        exit_action.setShortcut('Ctrl+Q')
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        # View menu
-        view_menu = menubar.addMenu('&View')
-        
-        refresh_action = QAction('&Refresh', self)
-        refresh_action.setShortcut('F5')
-        refresh_action.triggered.connect(self.refresh_gallery)
-        view_menu.addAction(refresh_action)
-        
         # Help menu
-        help_menu = menubar.addMenu('&Help')
+        help_menu = menubar.addMenu("Help")
         
-        about_action = QAction('&About', self)
-        about_action.triggered.connect(self.show_about)
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
         
-        # API menu for debugging
-        api_menu = menubar.addMenu('&API')
+        # User label on the right side
+        self.user_label = QLabel()
+        self.user_label.setStyleSheet("""
+            QLabel {
+                padding: 5px 10px;
+                margin-right: 10px;
+                font-weight: bold;
+                color: #0066cc;
+            }
+        """)
+        menubar.setCornerWidget(self.user_label, Qt.TopRightCorner)
+    
+    def _init_views(self):
+        """Initialize all views"""
+        self.views = {
+            'home': HomeView(),
+            'gallery': GalleryView(),
+            'import': ImportView(),
+            'stats': StatsView(),
+        }
         
-        health_check_action = QAction('Test API Connection', self)
-        health_check_action.triggered.connect(self._run_health_check)
-        api_menu.addAction(health_check_action)
+        # Add views to stack
+        for view in self.views.values():
+            self.view_stack.addWidget(view)
         
-        api_status_action = QAction('Show API Status', self)
-        api_status_action.triggered.connect(self._show_api_status)
-        api_menu.addAction(api_status_action)
+        # Add navigation buttons
+        self.nav_panel.add_button("Home", "home")
+        self.nav_panel.add_button("Gallery", "gallery")
+        self.nav_panel.add_button("Import", "import")
+        self.nav_panel.add_button("Stats", "stats")
+        self.nav_panel.finish_layout()
     
-    def setup_toolbar(self):
-        """Setup application toolbar"""
-        toolbar = self.addToolBar('Main')
+    def _connect_signals(self):
+        """Connect signals"""
+        # Navigation
+        self.nav_panel.view_changed.connect(self.show_view)
         
-        import_action = QAction('Import', self)
-        import_action.triggered.connect(self.show_import_dialog)
-        toolbar.addAction(import_action)
+        # Auth signals
+        self.auth_manager.logged_in.connect(self._on_logged_in)
+        self.auth_manager.logged_out.connect(self._on_logged_out)
         
-        refresh_action = QAction('Refresh', self)
-        refresh_action.triggered.connect(self.refresh_gallery)
-        toolbar.addAction(refresh_action)
+        # Status signals from all views
+        for view in self.views.values():
+            view.status_error.connect(self.show_error)
+            view.status_success.connect(self.show_success)
+            view.status_info.connect(self.show_info)
     
-    def setup_statusbar(self):
-        """Setup status bar"""
-        self.statusBar().showMessage('Ready')
+    def show_view(self, view_id):
+        """Show a view by id"""
+        if view_id not in self.views:
+            return
+        
+        # Hide current view
+        current = self.view_stack.currentWidget()
+        if current and hasattr(current, 'on_hide'):
+            current.on_hide()
+        
+        # Show new view
+        view = self.views[view_id]
+        self.view_stack.setCurrentWidget(view)
+        self.nav_panel.set_active(view_id)
+        
+        # Trigger on_show
+        if hasattr(view, 'on_show'):
+            view.on_show()
     
-    def show_import_dialog(self):
-        """Show import dialog"""
-        dialog = ImportDialog(self.api_client, self)
-        if dialog.exec():
-            # Refresh gallery after import (stats will auto-refresh when tab is viewed)
-            self.gallery_view.refresh()
+    def show_error(self, message):
+        """Show error in statusbar"""
+        self.status_text.setStyleSheet("background-color: #ffdddd; color: #cc0000; padding: 5px; font-size: 12px;")
+        self.status_text.setText(f"❌ {message}")
     
-    def refresh_gallery(self):
-        """Refresh the gallery view"""
-        self.gallery_view.refresh()
-        self.statusBar().showMessage('Gallery refreshed', 2000)
+    def show_success(self, message):
+        """Show success in statusbar"""
+        self.status_text.setStyleSheet("background-color: #ddffdd; color: #008800; padding: 5px; font-size: 12px;")
+        self.status_text.setText(f"✓ {message}")
     
-    def show_about(self):
+    def show_info(self, message):
+        """Show info in statusbar"""
+        self.status_text.setStyleSheet("padding: 5px; font-size: 12px;")
+        self.status_text.setText(message)
+    
+    def _show_about(self):
         """Show about dialog"""
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.about(self, "About ImaLink", 
-                         "ImaLink Photo Manager\nVersion 1.0.0\n\n"
-                         "A Qt-based frontend for photo management.")
+        user_info = ""
+        if self.auth_manager.is_logged_in():
+            user = self.auth_manager.get_user()
+            user_info = f"\n\nLogged in as: {user.get('display_name', user.get('username'))}"
+        
+        QMessageBox.about(
+            self,
+            "About ImaLink",
+            f"ImaLink Photo Management\nVersion 1.0{user_info}"
+        )
     
-    def on_photos_imported(self):
-        """Handle photos imported signal from import view"""
-        # Refresh gallery to show newly imported photos
-        self.gallery_view.refresh()
-        self.statusBar().showMessage('✅ Photos imported - Gallery refreshed', 3000)
+    def _show_login(self):
+        """Show login dialog"""
+        dialog = LoginDialog(self)
+        dialog.api_client = self.api_client  # Give dialog access to API client
+        
+        if dialog.exec() == QDialog.Accepted:
+            username, password = dialog.get_credentials()
+            try:
+                self.show_info("Logging in...")
+                user = self.auth_manager.login(username, password)
+                self.show_success(f"Welcome {user.get('display_name', username)}!")
+            except Exception as e:
+                self.show_error(f"Login failed: {e}")
+                # Try again
+                self._show_login()
+        else:
+            # User cancelled - close app
+            self.close()
     
-    def _show_api_status(self):
-        """Show detailed API status information"""
-        try:
-            # Get API status
-            status_response = requests.get(f"{self.api_client.base_url}/debug/status", timeout=5)
-            
-            if status_response.status_code == 200:
-                status_data = status_response.json()
-                
-                # Get database stats
-                stats_response = requests.get(f"{self.api_client.base_url}/debug/database-stats", timeout=5)
-                stats_data = stats_response.json() if stats_response.status_code == 200 else {}
-                
-                # Format status message
-                info_lines = [
-                    f"🌐 API URL: {self.api_client.base_url}",
-                    f"📊 API Status: {status_data.get('status', 'unknown')}",
-                ]
-                
-                if 'version' in status_data:
-                    info_lines.append(f"🏷️ API Version: {status_data['version']}")
-                
-                if 'database_url' in status_data:
-                    db_path = status_data['database_url'].replace('sqlite:///', '')
-                    info_lines.append(f"🗄️ Database: {db_path}")
-                
-                if 'development_mode' in status_data:
-                    mode = "Development" if status_data['development_mode'] else "Production"
-                    info_lines.append(f"⚙️ Mode: {mode}")
-                
-                if stats_data:
-                    info_lines.append("")
-                    info_lines.append("📈 Database Statistics:")
-                    info_lines.append(f"   Photos: {stats_data.get('photos', 0)}")
-                    info_lines.append(f"   Image Files: {stats_data.get('image_files', 0)}")
-                    info_lines.append(f"   Authors: {stats_data.get('authors', 0)}")
-                    info_lines.append(f"   Import Sessions: {stats_data.get('import_sessions', 0)}")
-                
-                QMessageBox.information(
-                    self,
-                    "API Status",
-                    "\n".join(info_lines)
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "API Status Error",
-                    f"API returned status code: {status_response.status_code}"
-                )
-                
-        except requests.exceptions.ConnectionError:
-            QMessageBox.critical(
-                self,
-                "API Connection Error",
-                f"Cannot connect to API server:\n{self.api_client.base_url}\n\n"
-                "Make sure the ImaLink API server is running."
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "API Error",
-                f"Error checking API status:\n{str(e)}"
-            )
+    def _on_logged_in(self, user):
+        """Handle successful login"""
+        # Update user label
+        username = user.get('display_name') or user.get('username', 'User')
+        self.user_label.setText(f"👤 {username}")
+    
+    def _on_logged_out(self):
+        """Handle logout"""
+        # Set user label to "Gjest"
+        self.user_label.setText("👤 Gjest")
+    
+    def _logout(self):
+        """Logout current user"""
+        reply = QMessageBox.question(
+            self,
+            "Logout",
+            "Are you sure you want to logout?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.auth_manager.logout()
+            self.show_info("Logged out")
+            self._show_login()
+    
+    def _restore_state(self):
+        """Restore window state from settings"""
+        geometry = self.settings.get_window_geometry()
+        if geometry:
+            self.restoreGeometry(geometry)
+        
+        state = self.settings.get_window_state()
+        if state:
+            self.restoreState(state)
+        
+        content_splitter_state = self.settings.get_content_splitter_state()
+        if content_splitter_state:
+            self.content_splitter.restoreState(content_splitter_state)
+        
+        main_splitter = self.centralWidget()
+        if main_splitter:
+            main_splitter_state = self.settings.get_main_splitter_state()
+            if main_splitter_state:
+                main_splitter.restoreState(main_splitter_state)
+    
+    def _save_state(self):
+        """Save window state to settings"""
+        self.settings.set_window_geometry(self.saveGeometry())
+        self.settings.set_window_state(self.saveState())
+        self.settings.set_content_splitter_state(self.content_splitter.saveState())
+        
+        main_splitter = self.centralWidget()
+        if main_splitter:
+            self.settings.set_main_splitter_state(main_splitter.saveState())
+    
+    def closeEvent(self, event):
+        """Handle window close"""
+        self._save_state()
+        event.accept()

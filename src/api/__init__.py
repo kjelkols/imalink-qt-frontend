@@ -1,3 +1,1 @@
-"""
-API communication package for ImaLink backend
-"""
+"""API module for backend communication"""
