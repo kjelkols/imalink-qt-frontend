@@ -46,27 +46,27 @@ def extract_basic_metadata(image_path: str) -> Dict[str, Any]:
             # Get dimensions
             result['width'], result['height'] = img.size
             
-            # Get EXIF data
-            exif_data = img._getexif()
-            if not exif_data:
+            # Get EXIF data using modern PIL method (works with JPEG, TIFF, NEF, etc.)
+            exif = img.getexif()
+            if not exif:
                 return result
             
             # Extract timestamp (98%+ reliable)
             for datetime_tag in [36867, 36868, 306]:  # DateTimeOriginal, DateTimeDigitized, DateTime
-                if datetime_tag in exif_data:
-                    dt_str = exif_data[datetime_tag]
+                if datetime_tag in exif:
+                    dt_str = exif[datetime_tag]
                     if dt_str:
                         result['taken_at'] = standardize_datetime(dt_str)
                         break
             
             # Extract camera make and model (98%+ reliable)
-            if 271 in exif_data:  # Make
-                result['camera_make'] = exif_data[271].strip() if exif_data[271] else None
-            if 272 in exif_data:  # Model
-                result['camera_model'] = exif_data[272].strip() if exif_data[272] else None
+            if 271 in exif:  # Make
+                result['camera_make'] = exif[271].strip() if exif[271] else None
+            if 272 in exif:  # Model
+                result['camera_model'] = exif[272].strip() if exif[272] else None
             
             # Extract GPS coordinates (40% reliable, but critical when present)
-            lat, lon = extract_gps_from_exif(exif_data)
+            lat, lon = extract_gps_from_exif(exif)
             result['gps_latitude'] = lat
             result['gps_longitude'] = lon
             
@@ -115,25 +115,26 @@ def extract_camera_settings(image_path: str) -> Dict[str, Any]:
     
     try:
         with Image.open(image_path) as img:
-            exif_data = img._getexif()
-            if not exif_data:
+            # Get EXIF data using modern PIL method (works with JPEG, TIFF, NEF, etc.)
+            exif = img.getexif()
+            if not exif:
                 return result
             
             # ISO (85%+ reliable)
-            if 34855 in exif_data:
-                result['iso'] = exif_data[34855]
+            if 34855 in exif:
+                result['iso'] = exif[34855]
             
             # Aperture (85%+ reliable)
-            if 33437 in exif_data:  # FNumber
-                f_num = exif_data[33437]
+            if 33437 in exif:  # FNumber
+                f_num = exif[33437]
                 if isinstance(f_num, tuple):
                     result['aperture'] = round(f_num[0] / f_num[1], 1)
                 else:
                     result['aperture'] = f_num
             
             # Shutter speed (85%+ reliable)
-            if 33434 in exif_data:  # ExposureTime
-                exp = exif_data[33434]
+            if 33434 in exif:  # ExposureTime
+                exp = exif[33434]
                 if isinstance(exp, tuple):
                     if exp[0] == 1:
                         result['shutter_speed'] = f"1/{exp[1]}"
@@ -143,26 +144,26 @@ def extract_camera_settings(image_path: str) -> Dict[str, Any]:
                     result['shutter_speed'] = str(exp)
             
             # Focal length (85%+ reliable)
-            if 37386 in exif_data:  # FocalLength
-                focal = exif_data[37386]
+            if 37386 in exif:  # FocalLength
+                focal = exif[37386]
                 if isinstance(focal, tuple):
                     result['focal_length'] = round(focal[0] / focal[1], 1)
                 else:
                     result['focal_length'] = focal
             
             # Lens info (60-70% reliable)
-            if 42036 in exif_data:  # LensModel
-                result['lens_model'] = exif_data[42036]
-            if 42035 in exif_data:  # LensMake
-                result['lens_make'] = exif_data[42035]
+            if 42036 in exif:  # LensModel
+                result['lens_model'] = exif[42036]
+            if 42035 in exif:  # LensMake
+                result['lens_make'] = exif[42035]
             
             # Flash (75%+ reliable)
-            if 37385 in exif_data:  # Flash
-                flash_val = exif_data[37385]
+            if 37385 in exif:  # Flash
+                flash_val = exif[37385]
                 result['flash'] = 'Fired' if (flash_val & 1) else 'No Flash'
             
             # Exposure program (70%+ reliable)
-            if 34850 in exif_data:  # ExposureProgram
+            if 34850 in exif:  # ExposureProgram
                 programs = {
                     0: 'Not Defined',
                     1: 'Manual',
@@ -174,10 +175,10 @@ def extract_camera_settings(image_path: str) -> Dict[str, Any]:
                     7: 'Portrait Mode',
                     8: 'Landscape Mode'
                 }
-                result['exposure_program'] = programs.get(exif_data[34850], 'Unknown')
+                result['exposure_program'] = programs.get(exif[34850], 'Unknown')
             
             # Metering mode (70%+ reliable)
-            if 37383 in exif_data:  # MeteringMode
+            if 37383 in exif:  # MeteringMode
                 metering = {
                     0: 'Unknown',
                     1: 'Average',
@@ -187,11 +188,11 @@ def extract_camera_settings(image_path: str) -> Dict[str, Any]:
                     5: 'Multi-Segment',
                     6: 'Partial'
                 }
-                result['metering_mode'] = metering.get(exif_data[37383], 'Unknown')
+                result['metering_mode'] = metering.get(exif[37383], 'Unknown')
             
             # White balance (70%+ reliable)
-            if 41987 in exif_data:  # WhiteBalance
-                wb = exif_data[41987]
+            if 41987 in exif:  # WhiteBalance
+                wb = exif[41987]
                 result['white_balance'] = 'Auto' if wb == 0 else 'Manual'
                 
     except Exception as e:
@@ -200,7 +201,7 @@ def extract_camera_settings(image_path: str) -> Dict[str, Any]:
     return result
 
 
-def extract_gps_from_exif(exif_data) -> Tuple[Optional[float], Optional[float]]:
+def extract_gps_from_exif(exif) -> Tuple[Optional[float], Optional[float]]:
     """
     Robust GPS coordinate extraction supporting multiple formats.
     
@@ -216,27 +217,30 @@ def extract_gps_from_exif(exif_data) -> Tuple[Optional[float], Optional[float]]:
     - Filters out "Null Island" (0, 0) as invalid
     
     Args:
-        exif_data: EXIF dictionary from PIL
+        exif: EXIF object from PIL Image.getexif()
         
     Returns:
         (latitude, longitude) tuple, or (None, None) if not found/invalid
     """
     try:
-        # Try GPS IFD first (more reliable structure)
-        gps_info = exif_data.get(34853)  # GPSInfo tag
+        # Get GPS IFD using modern PIL method
+        from PIL.ExifTags import GPSTAGS
         
-        if gps_info:
-            # Extract from GPS IFD dictionary
-            gps_latitude = gps_info.get(2)  # GPSLatitude
-            gps_latitude_ref = gps_info.get(1)  # GPSLatitudeRef
-            gps_longitude = gps_info.get(4)  # GPSLongitude
-            gps_longitude_ref = gps_info.get(3)  # GPSLongitudeRef
-        else:
-            # Fallback: try direct tags (less common)
-            gps_latitude = exif_data.get(2)
-            gps_latitude_ref = exif_data.get(1)
-            gps_longitude = exif_data.get(4)
-            gps_longitude_ref = exif_data.get(3)
+        # Try to get GPS IFD (tag 34853)
+        try:
+            gps_ifd = exif.get_ifd(0x8825)  # 0x8825 = 34853 = GPSInfo
+        except (KeyError, AttributeError):
+            # No GPS data available
+            return None, None
+        
+        if not gps_ifd:
+            return None, None
+        
+        # Extract GPS coordinates from IFD
+        gps_latitude = gps_ifd.get(2)  # GPSLatitude
+        gps_latitude_ref = gps_ifd.get(1)  # GPSLatitudeRef
+        gps_longitude = gps_ifd.get(4)  # GPSLongitude
+        gps_longitude_ref = gps_ifd.get(3)  # GPSLongitudeRef
         
         if not (gps_latitude and gps_longitude):
             return None, None
@@ -259,7 +263,8 @@ def extract_gps_from_exif(exif_data) -> Tuple[Optional[float], Optional[float]]:
         return lat, lon
         
     except Exception as e:
-        print(f"Error extracting GPS coordinates: {e}")
+        # Silent failure for images without GPS (very common)
+        # Only uncomment for debugging: print(f"Error extracting GPS coordinates: {e}")
         return None, None
 
 

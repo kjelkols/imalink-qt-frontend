@@ -2,8 +2,7 @@
 Image processing and utility functions
 """
 
-from PIL import Image, ImageOps, ExifTags
-from PIL.ExifTags import ORIENTATION
+from PIL import Image, ImageOps
 from pathlib import Path
 from typing import Tuple, Optional, List
 import hashlib
@@ -27,15 +26,8 @@ def get_image_info(file_path: str) -> dict:
                 "has_transparency": img.mode in ('RGBA', 'LA') or 'transparency' in img.info
             }
             
-            # EXIF data
-            exif_data = {}
-            if hasattr(img, '_getexif') and img._getexif():
-                exif = img._getexif()
-                for tag_id, value in exif.items():
-                    tag = ExifTags.TAGS.get(tag_id, tag_id)
-                    exif_data[tag] = value
-            
-            info["exif"] = exif_data
+            # EXIF data (basic check only - use exif_extractor for detailed extraction)
+            info["has_exif"] = hasattr(img, '_getexif') and img._getexif() is not None
             
             return info
     
@@ -87,35 +79,33 @@ def calculate_file_hash(file_path: str, algorithm: str = 'sha256') -> str:
 
 
 def is_supported_image(file_path: str) -> bool:
-    """Check if file is a supported image format"""
-    supported_formats = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp'}
-    
-    # Check by extension
+    """Check if file is a JPEG image (only supported format for now)"""
+    # Only accept JPEG files
     extension = Path(file_path).suffix.lower()
-    if extension in supported_formats:
-        return True
+    if extension not in {'.jpg', '.jpeg'}:
+        return False
     
-    # Check by MIME type
+    # Verify it's actually a valid JPEG by checking MIME type
     mime_type, _ = mimetypes.guess_type(file_path)
-    if mime_type and mime_type.startswith('image/'):
+    if mime_type and mime_type in ('image/jpeg', 'image/jpg'):
         return True
     
-    # Try to open with PIL
+    # Fallback: try to open with PIL and check format
     try:
         with Image.open(file_path) as img:
-            img.verify()
-        return True
+            return img.format == 'JPEG'
     except:
         return False
 
 
 def get_image_orientation(file_path: str) -> int:
-    """Get EXIF orientation value"""
+    """Get EXIF orientation value (1-8, where 1 is normal)"""
     try:
         with Image.open(file_path) as img:
             if hasattr(img, '_getexif') and img._getexif():
                 exif = img._getexif()
-                return exif.get(ORIENTATION, 1)
+                # Orientation tag ID is 274
+                return exif.get(274, 1)
     except:
         pass
     return 1

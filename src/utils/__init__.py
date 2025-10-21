@@ -14,6 +14,11 @@ from .image_utils import (
     calculate_file_hash,
 )
 
+from .preview_generator import (
+    generate_hotpreview_and_hash,
+    generate_coldpreview,
+)
+
 __all__ = [
     'extract_exif_dict',
     'extract_taken_at',
@@ -23,4 +28,6 @@ __all__ = [
     'get_image_info',
     'is_supported_image',
     'calculate_file_hash',
+    'generate_hotpreview_and_hash',
+    'generate_coldpreview',
 ]

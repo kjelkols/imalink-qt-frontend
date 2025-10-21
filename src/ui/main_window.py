@@ -188,7 +188,7 @@ class MainWindow(QMainWindow):
         self.views = {
             'home': HomeView(),
             'gallery': GalleryView(),
-            'import': ImportView(),
+            'import': ImportView(self.api_client, self.auth_manager),
             'stats': StatsView(),
         }
         
