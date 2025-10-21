@@ -1,29 +1,41 @@
 # ImaLink Qt Frontend
 
-A Qt-based desktop frontend for the ImaLink photo management system.
+A modern Qt-based desktop frontend for the ImaLink photo management system, built with clean architecture principles.
 
 ## Features
 
-- 📸 Browse photo gallery with thumbnails
-- 📥 Import images from local filesystem with EXIF extraction
-- 🔍 Search and filter photos by metadata
-- 🖼️ View photo details with zoom and pan
-- 🏷️ Tag management
-- ⭐ Rating system
-- 📦 Local storage management (no backend dependency)
-- 🔄 Independent photo viewer windows
+- 🏠 **Modern Navigation** - Collapsible navigation panel with icon-based menu
+- 📸 **Browse Gallery** - Grid view with thumbnails and metadata
+- 📥 **Import Photos** - Import from local filesystem with automatic EXIF extraction
+- 🔍 **Search & Filter** - Find photos by metadata, ratings, and tags
+- 🖼️ **Photo Viewer** - Independent viewer windows with zoom and pan
+- 🏷️ **Tag Management** - Organize photos with custom tags
+- ⭐ **Rating System** - Rate and filter by star ratings
+- 📊 **Statistics** - View library statistics and insights
+- 🔐 **JWT Authentication** - Secure login with token-based API access
+- � **State Persistence** - UI preferences and window state saved between sessions
 
-## Storage Architecture
+## Architecture
 
-ImaLink uses a **hybrid storage architecture**:
-- **Backend**: Manages photo metadata only (titles, ratings, tags, EXIF)
-- **Frontend**: Manages storage locations locally using `~/.imalink/storage_config.json`
+**Simplified Layered Architecture** for maintainability and testability:
 
-This means:
-- ✅ Backend is storage-agnostic (no FileStorage API needed)
-- ✅ Frontend controls where files are stored
-- ✅ Easy to add/remove/relocate storage locations
-- ✅ Support for external drives and network storage
+```
+src/
+├── api/          # Backend API communication
+├── auth/         # JWT authentication management
+├── services/     # Business logic layer
+├── storage/      # Local state persistence (QSettings + JSON)
+├── ui/           # Presentation layer (views, dialogs, widgets)
+└── utils/        # Shared utilities (EXIF, image processing)
+```
+
+**Key principles**:
+- ✅ **Separation of Concerns** - Business logic in services, UI in views
+- ✅ **Dependency Injection** - Clear dependencies, no globals
+- ✅ **Testable** - Services layer 100% unit-testable
+- ✅ **Qt Best Practices** - Standard Qt patterns and conventions
+
+See [REFACTORING_SPEC.md](REFACTORING_SPEC.md) for detailed architecture documentation.
 
 ## Development Environment
 
@@ -71,25 +83,60 @@ When running on WSL with backend on Windows, update the API base URL in the clie
 
 ```
 imalink-qt-frontend/
-├── main.py                 # Application entry point
-├── requirements.txt        # Python dependencies (install with uv)
-├── README.md              # Project documentation
-├── LICENSE                # Project license
+├── main.py                      # Application entry point
+├── requirements.txt             # Python dependencies (install with uv)
+├── README.md                   # This file
+├── REFACTORING_SPEC.md         # Architecture specification
+├── LICENSE                     # Project license
 │
-├── src/
-│   ├── api/               # Backend communication
-│   ├── auth/              # Authentication management
-│   ├── models/            # Data models
-│   ├── storage/           # Local storage management
-│   ├── ui/                # UI components
-│   └── utils/             # Utility functions (EXIF, cache, image utils)
+├── src/                        # Main source code (new architecture)
+│   ├── api/                    # Backend API communication
+│   │   ├── client.py          # HTTP client (ImaLinkClient)
+│   │   └── models.py          # API data models
+│   │
+│   ├── auth/                   # Authentication
+│   │   └── auth_manager.py    # JWT token management
+│   │
+│   ├── services/               # Business logic layer
+│   │   ├── photo_service.py   # Photo operations
+│   │   └── import_service.py  # Import workflow
+│   │
+│   ├── storage/                # Local persistence
+│   │   ├── state_manager.py   # UI state (QSettings + JSON)
+│   │   └── cache.py           # In-memory caching
+│   │
+│   ├── ui/                     # Presentation layer
+│   │   ├── app.py             # QApplication wrapper
+│   │   ├── main_window.py     # Main application window
+│   │   ├── navigation/        # Navigation components
+│   │   │   └── nav_panel.py   # Modern nav panel
+│   │   ├── views/             # Main content views
+│   │   │   ├── base_view.py   # Base class for views
+│   │   │   ├── home_view.py   # Welcome/dashboard
+│   │   │   ├── gallery_view.py # Photo gallery
+│   │   │   ├── import_view.py  # Import workflow
+│   │   │   └── stats_view.py   # Statistics
+│   │   ├── dialogs/           # Modal dialogs
+│   │   │   ├── login_dialog.py
+│   │   │   └── photo_detail_dialog.py
+│   │   └── widgets/           # Reusable UI components
+│   │       ├── photo_card.py
+│   │       └── thumbnail.py
+│   │
+│   └── utils/                  # Shared utilities
+│       ├── image_utils.py     # Image processing
+│       ├── exif_extractor.py  # EXIF metadata
+│       └── cache.py           # Caching utilities
 │
-└── resources/
+└── resources/                  # Assets
     ├── icons/
     └── styles/
+        └── main.qss
 ```
 
 ## Configuration
+
+### API Connection
 
 The application connects to the backend API at `http://localhost:8000/api/v1` by default.
 
@@ -97,6 +144,61 @@ The application connects to the backend API at `http://localhost:8000/api/v1` by
 - Backend on Windows: Use WSL IP address (find with `hostname -I` in WSL)
 - Update `base_url` in `src/api/client.py` if needed
 - Example: `http://172.20.10.2:8000/api/v1`
+
+### State Persistence
+
+The application saves UI state automatically:
+
+**QSettings** (platform-specific):
+- Linux: `~/.config/ImaLink/Frontend.conf`
+- Windows: Registry or INI file
+- macOS: Property list files
+
+**JSON configs**:
+- `~/.config/imalink/view_states.json` - View configurations (optional)
+- `~/.config/imalink/search_patterns.json` - Saved searches (future)
+
+**What is saved**:
+- Window size and position
+- Navigation panel collapsed state
+- Last active view
+- View-specific preferences (if enabled)
+
+## Development
+
+### Running the Application
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate  # WSL/Linux
+# or
+.venv\Scripts\activate     # Windows
+
+# Run application
+python main.py
+
+# Or with uv directly
+uv run python main.py
+```
+
+### Testing
+
+```bash
+# Run API compatibility tests
+uv run python test_api_updates.py
+
+# Run unit tests (when implemented)
+pytest tests/
+```
+
+### Architecture Documentation
+
+See [REFACTORING_SPEC.md](REFACTORING_SPEC.md) for:
+- Complete architecture specification
+- Component responsibilities
+- Dependency flow
+- Migration guide
+- Testing strategy
 
 ## Authentication
 
