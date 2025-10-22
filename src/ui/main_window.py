@@ -186,8 +186,8 @@ class MainWindow(QMainWindow):
     def _init_views(self):
         """Initialize all views"""
         self.views = {
-            'home': HomeView(),
-            'gallery': GalleryView(),
+            'home': HomeView(self.api_client),
+            'gallery': GalleryView(self.api_client),
             'import': ImportView(self.api_client, self.auth_manager),
             'stats': StatsView(),
         }
