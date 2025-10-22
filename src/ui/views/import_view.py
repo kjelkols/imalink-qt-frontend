@@ -215,6 +215,11 @@ class ImportView(BaseView):
     def _start_import(self):
         """Start the import process"""
         if not self.scanned_files:
+            QMessageBox.warning(
+                self,
+                "No Files",
+                "Please scan a directory first to find images to import."
+            )
             return
         
         # Check authentication
@@ -230,8 +235,9 @@ class ImportView(BaseView):
         if not session_name:
             QMessageBox.warning(
                 self,
-                "Missing Name",
-                "Please enter a name for this import."
+                "Missing Import Name",
+                "Please enter a name/description for this import session.\n\n"
+                "Example: 'Summer Vacation 2024' or 'Wedding Photos'"
             )
             return
         
@@ -248,10 +254,12 @@ class ImportView(BaseView):
             QApplication.processEvents()
             
             session_response = self.api_client.create_import_session(
-                name=session_name,
-                source_path=self.current_directory
+                source_path=self.current_directory,
+                description=session_name
             )
             session_id = session_response['id']
+            
+            print(f"Created import session #{session_id}: {session_name}")
             
             # Initialize summary
             summary = ImportSummary(
@@ -348,6 +356,10 @@ class ImportView(BaseView):
             self.scan_result_label.setText("")
             self.session_name_input.setText(f"Import {datetime.now().strftime('%Y-%m-%d %H:%M')}")
             
+            # Reload import history from backend to show the new import
+            # This ensures we always display the fresh, correct list from backend
+            self.load_import_history()
+            
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -389,11 +401,18 @@ Import completed: {summary.session_name}
     def on_show(self):
         """Called when view is shown"""
         self.status_info.emit("Import photos")
-        # Load import history when view is shown
+        # Load import history from backend (state is always in backend)
         self.load_import_history()
     
     def load_import_history(self):
-        """Load and display import sessions from backend"""
+        """
+        Load and display import sessions from backend.
+        
+        STATE MANAGEMENT:
+        - Backend is the single source of truth for import sessions
+        - Frontend always loads fresh data from API (no local cache)
+        - This ensures the list is always correct and up-to-date
+        """
         try:
             self.import_list.clear()
             response = self.api_client.get_import_sessions(limit=100)
