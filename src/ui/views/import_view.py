@@ -399,6 +399,10 @@ Import completed: {summary.session_name}
             response = self.api_client.get_import_sessions(limit=100)
             sessions = response.get('data', [])
             
+            # Debug output
+            print(f"Import sessions response: {response}")
+            print(f"Number of sessions: {len(sessions)}")
+            
             if not sessions:
                 self.import_list.addItem("No imports yet")
                 return
