@@ -536,7 +536,7 @@ class APIClient:
         return response.json()
     
     def update_photo_stack(self, stack_id: int, stack_type: Optional[str] = None,
-                          cover_photo_hothash: Optional[str] = None) -> Dict[str, Any]:
+                           cover_photo_hothash: Optional[str] = None) -> Dict[str, Any]:
         """
         Update photo stack
         
