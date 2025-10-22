@@ -1,3 +1,0 @@
-"""
-Custom widgets package
-"""
