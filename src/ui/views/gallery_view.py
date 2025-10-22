@@ -180,8 +180,12 @@ class GalleryView(BaseView):
         if self.session_filter.count() == 1:  # Only "All sessions"
             self.load_import_sessions()
         
-        # Display photos from model
-        self.refresh_view()
+        # Load photos if model is empty (first time)
+        if not self.search_model.get_photos():
+            self.load_photos_from_server()
+        else:
+            # Display photos from model
+            self.refresh_view()
     
     def load_import_sessions(self):
         """Load import sessions for dropdown (one-time)"""
