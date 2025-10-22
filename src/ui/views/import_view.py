@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import (
     QLabel, QPushButton, QVBoxLayout, QHBoxLayout, 
     QFileDialog, QMessageBox, QLineEdit, QProgressBar,
-    QApplication
+    QApplication, QListWidget, QGroupBox, QSplitter
 )
 from PySide6.QtCore import Qt
 from pathlib import Path
@@ -26,10 +26,32 @@ class ImportView(BaseView):
     
     def _setup_ui(self):
         """Setup import view UI"""
+        # Create horizontal splitter for import form and history
+        splitter = QSplitter(Qt.Horizontal)
+        
+        # Left side: Import form
+        import_widget = self._create_import_form()
+        splitter.addWidget(import_widget)
+        
+        # Right side: Import history
+        history_widget = self._create_import_history()
+        splitter.addWidget(history_widget)
+        
+        # Set initial sizes (60% form, 40% history)
+        splitter.setStretchFactor(0, 60)
+        splitter.setStretchFactor(1, 40)
+        
+        self.main_layout.addWidget(splitter)
+    
+    def _create_import_form(self):
+        """Create the import form widget"""
+        widget = QGroupBox("New Import")
+        layout = QVBoxLayout()
+        
         # Title
         title = QLabel("Import Photos")
         title.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 20px;")
-        self.main_layout.addWidget(title)
+        layout.addWidget(title)
         
         # Directory selection
         dir_layout = QHBoxLayout()
@@ -42,19 +64,19 @@ class ImportView(BaseView):
         browse_btn.setMinimumWidth(100)
         dir_layout.addWidget(browse_btn)
         
-        self.main_layout.addLayout(dir_layout)
+        layout.addLayout(dir_layout)
         
         # Scan button
         self.scan_btn = QPushButton("Scan Directory")
         self.scan_btn.clicked.connect(self._scan_directory)
         self.scan_btn.setEnabled(False)
         self.scan_btn.setMinimumHeight(40)
-        self.main_layout.addWidget(self.scan_btn)
+        layout.addWidget(self.scan_btn)
         
         # Scan results
         self.scan_result_label = QLabel("")
         self.scan_result_label.setStyleSheet("padding: 10px; font-size: 14px;")
-        self.main_layout.addWidget(self.scan_result_label)
+        layout.addWidget(self.scan_result_label)
         
         # Import session name
         session_layout = QHBoxLayout()
@@ -63,7 +85,7 @@ class ImportView(BaseView):
         self.session_name_input.setPlaceholderText("e.g., Italy Summer 2024")
         self.session_name_input.setText(f"Import {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         session_layout.addWidget(self.session_name_input, 1)
-        self.main_layout.addLayout(session_layout)
+        layout.addLayout(session_layout)
         
         # Import button
         self.import_btn = QPushButton("Start Import")
@@ -85,19 +107,53 @@ class ImportView(BaseView):
                 background: #cccccc;
             }
         """)
-        self.main_layout.addWidget(self.import_btn)
+        layout.addWidget(self.import_btn)
         
         # Progress section
         self.progress_label = QLabel("")
         self.progress_label.setStyleSheet("padding: 10px; font-size: 14px;")
-        self.main_layout.addWidget(self.progress_label)
+        layout.addWidget(self.progress_label)
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.main_layout.addWidget(self.progress_bar)
+        layout.addWidget(self.progress_bar)
         
         # Spacer
-        self.main_layout.addStretch()
+        layout.addStretch()
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def _create_import_history(self):
+        """Create the import history widget"""
+        widget = QGroupBox("Import History")
+        layout = QVBoxLayout()
+        
+        # Import sessions list
+        self.import_list = QListWidget()
+        self.import_list.setStyleSheet("""
+            QListWidget {
+                font-size: 13px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #ddd;
+            }
+            QListWidget::item:selected {
+                background: #0078d4;
+                color: white;
+            }
+        """)
+        layout.addWidget(self.import_list)
+        
+        # Refresh button
+        refresh_btn = QPushButton("🔄 Refresh List")
+        refresh_btn.clicked.connect(self.load_import_history)
+        layout.addWidget(refresh_btn)
+        
+        widget.setLayout(layout)
+        return widget
     
     def _select_directory(self):
         """Open directory selection dialog"""
@@ -333,3 +389,50 @@ Import completed: {summary.session_name}
     def on_show(self):
         """Called when view is shown"""
         self.status_info.emit("Import photos")
+        # Load import history when view is shown
+        self.load_import_history()
+    
+    def load_import_history(self):
+        """Load and display import sessions from backend"""
+        try:
+            self.import_list.clear()
+            response = self.api_client.get_import_sessions(limit=100)
+            sessions = response.get('data', [])
+            
+            if not sessions:
+                self.import_list.addItem("No imports yet")
+                return
+            
+            # Display sessions (newest first if they have created_at)
+            sessions_sorted = sorted(
+                sessions, 
+                key=lambda s: s.get('created_at', ''), 
+                reverse=True
+            )
+            
+            for session in sessions_sorted:
+                session_id = session.get('id')
+                source_path = session.get('source_path', 'Unknown')
+                description = session.get('description', '')
+                created_at = session.get('created_at', '')
+                
+                # Format display text
+                if created_at:
+                    try:
+                        dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        date_str = dt.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        date_str = created_at[:16] if len(created_at) > 16 else created_at
+                else:
+                    date_str = "Unknown date"
+                
+                if description:
+                    text = f"#{session_id} - {description}\n   📁 {source_path}\n   📅 {date_str}"
+                else:
+                    text = f"#{session_id}\n   📁 {source_path}\n   📅 {date_str}"
+                
+                self.import_list.addItem(text)
+                
+        except Exception as e:
+            self.import_list.clear()
+            self.import_list.addItem(f"Error loading history: {e}")
