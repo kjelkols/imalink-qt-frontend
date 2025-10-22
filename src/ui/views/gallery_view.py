@@ -171,6 +171,16 @@ class GalleryView(BaseView):
 
         # Storage for thumbnail widgets
         self.thumbnail_widgets: Dict[str, PhotoThumbnail] = {}
+        
+        # Track last column count for resize detection
+        self._last_cols = 0
+    
+    def resizeEvent(self, event):
+        """Handle resize - re-layout grid if needed"""
+        super().resizeEvent(event)
+        # Trigger refresh to recalculate columns
+        if self.thumbnail_widgets:
+            self.refresh_view()
     
     def on_show(self):
         """Called when view is shown - just display existing data"""
@@ -295,52 +305,71 @@ class GalleryView(BaseView):
     
     def refresh_view(self):
         """Refresh view with existing data from model (no server call)"""
-        # Clear existing widgets
-        for widget in self.thumbnail_widgets.values():
-            widget.deleteLater()
-        self.thumbnail_widgets.clear()
+        # Get photos from model
+        photos = self.search_model.get_photos()
         
-        # Clear grid layout
+        if not photos:
+            self.status_label.setText("No photos to display")
+            # Clear existing widgets
+            for widget in self.thumbnail_widgets.values():
+                widget.deleteLater()
+            self.thumbnail_widgets.clear()
+            for i in reversed(range(self.grid_layout.count())):
+                item = self.grid_layout.itemAt(i)
+                widget = item.widget()
+                if widget:
+                    self.grid_layout.removeWidget(widget)
+            return
+        
+        # Calculate columns based on available width
+        available_width = self.scroll.viewport().width() - 20
+        thumb_width = 200 + 15  # thumbnail + spacing
+        cols_per_row = max(1, available_width // thumb_width)
+        
+        # Only re-layout if column count changed or widgets don't exist
+        if cols_per_row == self._last_cols and self.thumbnail_widgets:
+            return
+        
+        self._last_cols = cols_per_row
+        
+        # Clear existing layout
         for i in reversed(range(self.grid_layout.count())):
             item = self.grid_layout.itemAt(i)
             widget = item.widget()
             if widget:
                 self.grid_layout.removeWidget(widget)
         
-        # Get photos from model
-        photos = self.search_model.get_photos()
+        # Create widgets if they don't exist
+        if not self.thumbnail_widgets:
+            for photo in photos:
+                hothash = photo.get('hothash')
+                if not hothash:
+                    continue
+                
+                thumb = PhotoThumbnail(photo)
+                thumb.clicked.connect(self.on_photo_clicked)
+                self.thumbnail_widgets[hothash] = thumb
+                
+                # Set image from cache
+                image_data = self.search_model.get_thumbnail(hothash)
+                if image_data:
+                    thumb.set_image(image_data)
         
-        if not photos:
-            self.status_label.setText("No photos to display")
-            return
-        
-        # Create and layout thumbnails
-        cols_per_row = 4  # Fixed layout
+        # Layout widgets in grid
         row = 0
         col = 0
-        
         for photo in photos:
             hothash = photo.get('hothash')
             if not hothash:
                 continue
             
-            # Create thumbnail widget
-            thumb = PhotoThumbnail(photo)
-            thumb.clicked.connect(self.on_photo_clicked)
-            
-            # Set image from cache
-            image_data = self.search_model.get_thumbnail(hothash)
-            if image_data:
-                thumb.set_image(image_data)
-            
-            # Add to grid
-            self.grid_layout.addWidget(thumb, row, col)
-            self.thumbnail_widgets[hothash] = thumb
-            
-            col += 1
-            if col >= cols_per_row:
-                col = 0
-                row += 1
+            thumb = self.thumbnail_widgets.get(hothash)
+            if thumb:
+                self.grid_layout.addWidget(thumb, row, col)
+                col += 1
+                if col >= cols_per_row:
+                    col = 0
+                    row += 1
         
         self.status_label.setText(f"Displaying {len(photos)} photos")
     
