@@ -368,8 +368,16 @@ GALLERY_TEMPLATE = """
                 }
                 
                 photos = data.data || [];
+                
+                // Debug: Log first photo structure
+                if (photos.length > 0) {
+                    console.log('Sample photo data:', photos[0]);
+                    console.log('Available fields:', Object.keys(photos[0]));
+                }
+                
                 displayPhotos(photos);
             } catch (error) {
+                console.error('Error loading photos:', error);
                 gallery.className = 'error';
                 gallery.innerHTML = `Error loading photos: ${error.message}`;
             }
@@ -390,33 +398,52 @@ GALLERY_TEMPLATE = """
             stats.textContent = `Showing ${photoList.length} photo(s)`;
             
             gallery.className = 'gallery';
-            gallery.innerHTML = photoList.map(photo => `
-                <div class="photo-card" onclick="showPhotoDetail('${photo.photo_hothash}')">
-                    <img class="photo-image" 
-                         src="data:image/jpeg;base64,${photo.hotpreview_base64}" 
-                         alt="${photo.filename || 'Photo'}"
-                         loading="lazy" />
-                    <div class="photo-info">
-                        <div class="photo-filename" title="${photo.filename || 'Unknown'}">
-                            ${photo.filename || 'Unknown'}
+            gallery.innerHTML = photoList.map((photo, index) => {
+                const hothash = photo.photo_hothash || photo.hothash || `photo-${index}`;
+                const filename = photo.filename || photo.original_filename || 'Unknown';
+                const hotpreview = photo.hotpreview_base64 || photo.hotpreview || '';
+                
+                return `
+                    <div class="photo-card" onclick="showPhotoDetail('${hothash}')">
+                        <img class="photo-image" 
+                             src="data:image/jpeg;base64,${hotpreview}" 
+                             alt="${filename}"
+                             loading="lazy"
+                             onerror="this.style.display='none'" />
+                        <div class="photo-info">
+                            <div class="photo-filename" title="${filename}">
+                                ${filename}
+                            </div>
+                            <div class="photo-hash">${hothash.substring(0, 16)}...</div>
                         </div>
-                        <div class="photo-hash">${photo.photo_hothash.substring(0, 16)}...</div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
         
         // Show photo detail modal
         function showPhotoDetail(hothash) {
-            const photo = photos.find(p => p.photo_hothash === hothash);
-            if (!photo) return;
+            const photo = photos.find(p => 
+                (p.photo_hothash === hothash) || 
+                (p.hothash === hothash)
+            );
+            
+            if (!photo) {
+                console.warn('Photo not found:', hothash);
+                return;
+            }
             
             const modal = document.getElementById('modal');
             const modalImage = document.getElementById('modalImage');
             
-            // For now, show hotpreview. Later we can load coldpreview
-            modalImage.src = `data:image/jpeg;base64,${photo.hotpreview_base64}`;
-            modal.classList.add('active');
+            // Get hotpreview with fallbacks
+            const hotpreview = photo.hotpreview_base64 || photo.hotpreview || '';
+            if (hotpreview) {
+                modalImage.src = `data:image/jpeg;base64,${hotpreview}`;
+                modal.classList.add('active');
+            } else {
+                console.warn('No preview available for photo:', hothash);
+            }
         }
         
         // Close modal
