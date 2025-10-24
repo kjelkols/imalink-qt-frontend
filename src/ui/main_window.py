@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
             'home': HomeView(self.api_client),
             'gallery': GalleryView(self.api_client),
             'import': ImportView(self.api_client, self.auth_manager),
-            'stats': StatsView(),
+            'stats': StatsView(self.api_client),
         }
         
         # Add views to stack

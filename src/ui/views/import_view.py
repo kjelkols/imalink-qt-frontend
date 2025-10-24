@@ -259,8 +259,6 @@ class ImportView(BaseView):
             )
             session_id = session_response['id']
             
-            print(f"Created import session #{session_id}: {session_name}")
-            
             # Initialize summary
             summary = ImportSummary(
                 total_files=len(self.scanned_files),
@@ -417,10 +415,6 @@ Import completed: {summary.session_name}
             self.import_list.clear()
             response = self.api_client.get_import_sessions(limit=100)
             sessions = response.get('data', [])
-            
-            # Debug output
-            print(f"Import sessions response: {response}")
-            print(f"Number of sessions: {len(sessions)}")
             
             if not sessions:
                 self.import_list.addItem("No imports yet")

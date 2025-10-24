@@ -723,10 +723,49 @@ class APIClient:
         # Create multipart form data
         files = {'file': ('coldpreview.jpg', coldpreview_bytes, 'image/jpeg')}
         
-        # Use auth headers without Content-Type (requests will set it for multipart)
+                # Use auth headers without Content-Type (requests will set it for multipart)
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         
         response = requests.put(url, files=files, headers=headers)
         response.raise_for_status()
         return response.json()
+    
+    # ========================================
+    # STATISTICS ENDPOINTS
+    # ========================================
+    
+    def get_database_stats(self) -> Dict[str, Any]:
+        """
+        Get database and storage statistics.
+        
+        GET /api/v1/database-stats
+        
+        NO AUTHENTICATION REQUIRED - Public endpoint for system monitoring
+        
+        Returns:
+            {
+                "tables": {
+                    "table_name": {
+                        "name": str,
+                        "record_count": int,
+                        "size_bytes": int,
+                        "size_mb": float
+                    }
+                },
+                "coldstorage": {
+                    "path": str,
+                    "total_files": int,
+                    "total_size_bytes": int,
+                    "total_size_mb": float,
+                    "total_size_gb": float
+                },
+                "database_file": str,
+                "database_size_bytes": int,
+                "database_size_mb": float
+            }
+        """
+        url = f"{self.base_url}/api/v1/database-stats"
+        # No auth headers needed - public endpoint
+        response = requests.get(url)
+        response.raise_for_status()
         return response.json()
