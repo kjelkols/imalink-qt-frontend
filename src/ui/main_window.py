@@ -9,12 +9,14 @@ from PySide6.QtGui import QAction
 from ..storage.settings import Settings
 from ..api.client import APIClient
 from ..auth.auth_manager import AuthManager
+from ..web_server import WebServer
 from .navigation import NavigationPanel
 from .login_dialog import LoginDialog
 from .register_dialog import RegisterDialog
 from .views.home_view import HomeView
 from .views.gallery_view import GalleryView
 from .views.gallery_view_html import GalleryViewHTML
+from .views.gallery_view_web import GalleryViewWeb
 from .views.import_view import ImportView
 from .views.stats_view import StatsView
 
@@ -33,6 +35,10 @@ class MainWindow(QMainWindow):
         self.settings = Settings()
         self.api_client = APIClient()
         self.auth_manager = AuthManager(self.api_client, self.settings)
+        
+        # Start embedded web server
+        self.web_server = WebServer(self.api_client, port=5555)
+        self.web_server.start()
         
         self._setup_ui()
         self._init_views()
@@ -190,6 +196,7 @@ class MainWindow(QMainWindow):
             'home': HomeView(self.api_client),
             'gallery': GalleryView(self.api_client),
             'gallery-html': GalleryViewHTML(self.api_client),
+            'gallery-web': GalleryViewWeb(self.web_server),
             'import': ImportView(self.api_client, self.auth_manager),
             'stats': StatsView(self.api_client),
         }
@@ -202,6 +209,7 @@ class MainWindow(QMainWindow):
         self.nav_panel.add_button("Home", "home")
         self.nav_panel.add_button("Gallery (Qt)", "gallery")
         self.nav_panel.add_button("Gallery (HTML)", "gallery-html")
+        self.nav_panel.add_button("Gallery (Web)", "gallery-web")
         self.nav_panel.add_button("Import", "import")
         self.nav_panel.add_button("Stats", "stats")
         self.nav_panel.finish_layout()

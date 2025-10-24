@@ -150,24 +150,45 @@ class GalleryViewHTML(BaseView):
     
     def _generate_gallery_html(self, photos):
         """Generate HTML for photo gallery"""
+        # Debug: Check first photo structure
+        if photos:
+            print(f"DEBUG: First photo keys: {list(photos[0].keys())}")
+            print(f"DEBUG: Sample photo data: {photos[0]}")
+        
         # Generate photo cards
         photo_cards = []
-        for photo in photos:
+        for i, photo in enumerate(photos):
             hothash = photo.get('photo_hothash', '')
-            filename = photo.get('filename', 'Unknown')
-            hotpreview = photo.get('hotpreview_base64', '')
+            
+            # Try multiple field names for filename
+            filename = (photo.get('filename') or 
+                       photo.get('original_filename') or 
+                       photo.get('file_name') or
+                       f'Photo {i+1}')
+            
+            # Try multiple field names for hotpreview
+            hotpreview = (photo.get('hotpreview_base64') or 
+                         photo.get('hotpreview') or
+                         photo.get('preview_base64') or
+                         '')
+            
+            # QTextBrowser has limited support for base64 images
+            # Use a placeholder if no preview available
+            if hotpreview:
+                img_html = f'<div class="photo-placeholder">📷 {filename[:20]}...</div>'
+            else:
+                img_html = '<div class="photo-placeholder">📷 No preview</div>'
             
             # Create clickable photo card
             card_html = f"""
             <div class="photo-card">
                 <a href="photo:{hothash}" style="text-decoration: none; color: inherit;">
                     <div class="photo-image-container">
-                        <img src="data:image/jpeg;base64,{hotpreview}" 
-                             alt="{filename}"
-                             class="photo-image" />
+                        {img_html}
                     </div>
                     <div class="photo-info">
-                        <div class="photo-filename">{filename}</div>
+                        <div class="photo-filename" title="{filename}">{filename}</div>
+                        <div class="photo-hash">{hothash[:12]}...</div>
                     </div>
                 </a>
             </div>
@@ -214,6 +235,17 @@ class GalleryViewHTML(BaseView):
                     height: 200px;
                     overflow: hidden;
                     background: #e0e0e0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }}
+                
+                .photo-placeholder {{
+                    font-size: 48px;
+                    text-align: center;
+                    padding: 20px;
+                    color: #999;
+                    word-break: break-word;
                 }}
                 
                 .photo-image {{
@@ -225,6 +257,7 @@ class GalleryViewHTML(BaseView):
                 
                 .photo-info {{
                     padding: 10px;
+                    background: #f8f9fa;
                 }}
                 
                 .photo-filename {{
@@ -233,6 +266,14 @@ class GalleryViewHTML(BaseView):
                     white-space: nowrap;
                     overflow: hidden;
                     text-overflow: ellipsis;
+                    font-weight: 600;
+                    margin-bottom: 4px;
+                }}
+                
+                .photo-hash {{
+                    font-size: 11px;
+                    color: #666;
+                    font-family: monospace;
                 }}
                 
                 h1 {{
