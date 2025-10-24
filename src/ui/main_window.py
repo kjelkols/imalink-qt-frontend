@@ -14,6 +14,7 @@ from .login_dialog import LoginDialog
 from .register_dialog import RegisterDialog
 from .views.home_view import HomeView
 from .views.gallery_view import GalleryView
+from .views.gallery_view_html import GalleryViewHTML
 from .views.import_view import ImportView
 from .views.stats_view import StatsView
 
@@ -188,6 +189,7 @@ class MainWindow(QMainWindow):
         self.views = {
             'home': HomeView(self.api_client),
             'gallery': GalleryView(self.api_client),
+            'gallery-html': GalleryViewHTML(self.api_client),
             'import': ImportView(self.api_client, self.auth_manager),
             'stats': StatsView(self.api_client),
         }
@@ -198,7 +200,8 @@ class MainWindow(QMainWindow):
         
         # Add navigation buttons
         self.nav_panel.add_button("Home", "home")
-        self.nav_panel.add_button("Gallery", "gallery")
+        self.nav_panel.add_button("Gallery (Qt)", "gallery")
+        self.nav_panel.add_button("Gallery (HTML)", "gallery-html")
         self.nav_panel.add_button("Import", "import")
         self.nav_panel.add_button("Stats", "stats")
         self.nav_panel.finish_layout()
