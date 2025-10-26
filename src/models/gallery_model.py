@@ -1,5 +1,6 @@
 """Gallery search model - holds search criteria and cached photo data"""
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List
+from .photo_model import PhotoModel
 
 
 class GallerySearchModel:
@@ -7,11 +8,13 @@ class GallerySearchModel:
     Simple search model for gallery view.
     Holds search criteria and cached photo data.
     Photos are loaded from server only when criteria change.
+    
+    NOTE: This model stores PhotoModel objects, NOT raw API dicts.
     """
     
     def __init__(self):
         self.import_session_id: Optional[int] = None
-        self.photos: List[Dict[str, Any]] = []
+        self.photos: List[PhotoModel] = []  # Changed from Dict to PhotoModel
         self.thumbnails: Dict[str, bytes] = {}  # hothash -> image_data
     
     def set_import_session(self, session_id: Optional[int]) -> bool:
@@ -27,12 +30,12 @@ class GallerySearchModel:
             return True
         return False
     
-    def set_photos(self, photos: List[Dict[str, Any]]):
-        """Set cached photo data"""
+    def set_photos(self, photos: List[PhotoModel]):
+        """Set cached photo data (PhotoModel objects)"""
         self.photos = photos
     
-    def get_photos(self) -> List[Dict[str, Any]]:
-        """Get cached photo data"""
+    def get_photos(self) -> List[PhotoModel]:
+        """Get cached photo data (PhotoModel objects)"""
         return self.photos
     
     def set_thumbnail(self, hothash: str, image_data: bytes):

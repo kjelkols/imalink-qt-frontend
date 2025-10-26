@@ -1,12 +1,14 @@
 """
 Photo detail dialog - Zoomable image viewer
+
+Works with PhotoModel only - no direct API/JSON knowledge.
 """
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QPushButton, QScrollArea)
 from PySide6.QtCore import Qt, QThread, Signal, QPoint
 from PySide6.QtGui import QPixmap, QWheelEvent, QMouseEvent
-from typing import Dict, Any
+from ...models.photo_model import PhotoModel
 
 
 class ZoomableImageLabel(QLabel):
@@ -98,11 +100,10 @@ class PhotoDetailDialog(QMainWindow):
     _window_count = 0
     _cascade_offset = 40  # Pixels to offset each new window
     
-    def __init__(self, photo_data: Dict[str, Any], api_client, parent=None):
+    def __init__(self, photo: PhotoModel, api_client, parent=None):
         super().__init__(parent)
-        self.photo_data = photo_data
+        self.photo = photo  # PhotoModel object, NOT dict!
         self.api_client = api_client
-        self.hothash = photo_data.get('hothash')
         self.original_pixmap = None
         self.zoom_level = 1.0
         
@@ -135,8 +136,7 @@ class PhotoDetailDialog(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface"""
-        filename = self.photo_data.get('filename', 'Unknown')
-        self.setWindowTitle(f"Photo Viewer - {filename}")
+        self.setWindowTitle(f"Photo Viewer - {self.photo.display_filename}")
         
         # Set default size (70% width, 75% height)
         from PySide6.QtWidgets import QApplication
@@ -239,7 +239,7 @@ class PhotoDetailDialog(QMainWindow):
         self.status_label.setText("Loading preview...")
         
         # Start worker thread
-        self.loader = ColdpreviewLoader(self.api_client, self.hothash)
+        self.loader = ColdpreviewLoader(self.api_client, self.photo.hothash)
         self.loader.preview_loaded.connect(self.on_preview_loaded)
         self.loader.error_occurred.connect(self.on_preview_error)
         self.loader.start()

@@ -7,16 +7,17 @@ from PySide6.QtGui import QPixmap, QCursor
 from typing import Dict, Any, List
 from .base_view import BaseView
 from ...models.gallery_model import GallerySearchModel
+from ...models.photo_model import PhotoModel
 
 
 class PhotoThumbnail(QLabel):
-    """Clickable photo thumbnail widget"""
+    """Clickable photo thumbnail widget - Works with PhotoModel only"""
     
-    clicked = Signal(dict)  # Emits photo data when clicked
+    clicked = Signal(object)  # Emits PhotoModel when clicked
     
-    def __init__(self, photo_data: Dict[str, Any], parent=None):
+    def __init__(self, photo: PhotoModel, parent=None):
         super().__init__(parent)
-        self.photo_data = photo_data
+        self.photo = photo  # PhotoModel object, NOT dict!
         self.setFixedSize(200, 250)
         self.setFrameStyle(QFrame.Box | QFrame.Plain)
         self.setStyleSheet("""
@@ -52,52 +53,19 @@ class PhotoThumbnail(QLabel):
         self.image_label.setText("Loading...")
         layout.addWidget(self.image_label)
 
-        # Filename
-        filename = self._get_filename(photo_data)
-        filename_label = QLabel(filename)
+        # Filename - use clean property from PhotoModel
+        filename_label = QLabel(photo.display_filename)
         filename_label.setStyleSheet("color: #fff; font-weight: bold; border: none;")
         filename_label.setWordWrap(False)
         filename_label.setFixedWidth(180)
         filename_label.setMaximumHeight(40)
         layout.addWidget(filename_label)
 
-        # Tooltip
-        taken_at = photo_data.get('taken_at', 'Unknown date')
-        if taken_at and taken_at != 'Unknown date':
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(taken_at.replace('Z', '+00:00'))
-                taken_at = dt.strftime('%Y-%m-%d %H:%M')
-            except:
-                pass
-        
-        tooltip_text = f"<b>{filename}</b><br>📅 {taken_at}"
+        # Tooltip - use clean properties from PhotoModel
+        tooltip_text = f"<b>{photo.display_filename}</b><br>📅 {photo.display_date}"
         self.setToolTip(tooltip_text)
 
         container.setGeometry(5, 5, 190, 230)
-    
-    def _get_filename(self, photo_data: Dict[str, Any]) -> str:
-        """Extract filename from photo data"""
-        # Try primary_filename first
-        filename = photo_data.get('primary_filename')
-        if filename and isinstance(filename, str) and filename.strip():
-            return filename
-        
-        # Try image_files
-        image_files = photo_data.get('image_files')
-        if image_files and isinstance(image_files, list) and len(image_files) > 0:
-            filename = image_files[0].get('filename')
-            if filename and isinstance(filename, str) and filename.strip():
-                return filename
-        
-        # Try photo_data filename
-        filename = photo_data.get('filename')
-        if filename and isinstance(filename, str) and filename.strip():
-            return filename
-        
-        # Fallback to photo id
-        photo_id = photo_data.get('id')
-        return f"photo_{photo_id}" if photo_id else "(no filename)"
     
     def set_image(self, image_data: bytes):
         """Set thumbnail image from bytes"""
@@ -111,7 +79,7 @@ class PhotoThumbnail(QLabel):
     def mousePressEvent(self, event):
         """Handle click"""
         if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.photo_data)
+            self.clicked.emit(self.photo)
 
 
 class GalleryView(BaseView):
@@ -243,24 +211,32 @@ class GalleryView(BaseView):
             self.refresh_view()
     
     def load_photos_from_server(self):
-        """Load photos from server based on current search criteria"""
+        """
+        Load photos from server based on current search criteria.
+        
+        IMPORTANT: This is where API JSON is converted to PhotoModel.
+        After this point, all code works with PhotoModel objects only.
+        """
         self.status_label.setText("Loading photos from server...")
         QApplication.processEvents()  # Update UI
         
         try:
-            # Get all photos
+            # Get all photos from API (returns raw dict)
             response = self.api_client.get_photos(limit=500)
-            all_photos = response.get('data', [])
+            all_photos_dict = response.get('data', [])
+            
+            # Convert API dicts to PhotoModel objects
+            all_photos = [PhotoModel.from_dict(p) for p in all_photos_dict]
             
             # Filter by import_session_id if selected
             session_id = self.search_model.import_session_id
             if session_id is not None:
                 filtered_photos = [p for p in all_photos 
-                                  if p.get('import_session_id') == session_id]
+                                  if p.import_session_id == session_id]
             else:
                 filtered_photos = all_photos
             
-            # Store in model
+            # Store PhotoModel objects in model
             self.search_model.set_photos(filtered_photos)
             
             # Load thumbnails
@@ -282,12 +258,8 @@ class GalleryView(BaseView):
         total = len(photos)
         
         for i, photo in enumerate(photos):
-            hothash = photo.get('hothash')
-            if not hothash:
-                continue
-            
             # Check if already cached
-            if self.search_model.get_thumbnail(hothash):
+            if self.search_model.get_thumbnail(photo.hothash):
                 continue
             
             # Update status
@@ -296,16 +268,16 @@ class GalleryView(BaseView):
             
             try:
                 # Load thumbnail directly (no thread)
-                image_data = self.api_client.get_hotpreview(hothash)
-                self.search_model.set_thumbnail(hothash, image_data)
+                image_data = self.api_client.get_hotpreview(photo.hothash)
+                self.search_model.set_thumbnail(photo.hothash, image_data)
             except Exception as e:
-                print(f"Failed to load thumbnail {hothash}: {e}")
+                print(f"Failed to load thumbnail {photo.hothash}: {e}")
                 # Store empty to mark as attempted
-                self.search_model.set_thumbnail(hothash, b'')
+                self.search_model.set_thumbnail(photo.hothash, b'')
     
     def refresh_view(self):
         """Refresh view with existing data from model (no server call)"""
-        # Get photos from model
+        # Get PhotoModel objects from model
         photos = self.search_model.get_photos()
         
         if not photos:
@@ -342,16 +314,12 @@ class GalleryView(BaseView):
         # Create widgets if they don't exist
         if not self.thumbnail_widgets:
             for photo in photos:
-                hothash = photo.get('hothash')
-                if not hothash:
-                    continue
-                
-                thumb = PhotoThumbnail(photo)
+                thumb = PhotoThumbnail(photo)  # Pass PhotoModel, not dict
                 thumb.clicked.connect(self.on_photo_clicked)
-                self.thumbnail_widgets[hothash] = thumb
+                self.thumbnail_widgets[photo.hothash] = thumb
                 
                 # Set image from cache
-                image_data = self.search_model.get_thumbnail(hothash)
+                image_data = self.search_model.get_thumbnail(photo.hothash)
                 if image_data:
                     thumb.set_image(image_data)
         
@@ -359,11 +327,7 @@ class GalleryView(BaseView):
         row = 0
         col = 0
         for photo in photos:
-            hothash = photo.get('hothash')
-            if not hothash:
-                continue
-            
-            thumb = self.thumbnail_widgets.get(hothash)
+            thumb = self.thumbnail_widgets.get(photo.hothash)
             if thumb:
                 self.grid_layout.addWidget(thumb, row, col)
                 col += 1
@@ -373,13 +337,9 @@ class GalleryView(BaseView):
         
         self.status_label.setText(f"Displaying {len(photos)} photos")
     
-    def on_photo_clicked(self, photo_data: Dict):
+    def on_photo_clicked(self, photo: PhotoModel):
         """Handle photo click - open detail view"""
         from .photo_detail_dialog import PhotoDetailDialog
         
-        hothash = photo_data.get('hothash')
-        if not hothash:
-            return
-        
-        dialog = PhotoDetailDialog(photo_data, self.api_client)
+        dialog = PhotoDetailDialog(photo, self.api_client)
         dialog.show()
