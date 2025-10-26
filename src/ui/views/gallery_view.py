@@ -8,31 +8,24 @@ from typing import Dict, Any, List
 from .base_view import BaseView
 from ...models.gallery_model import GallerySearchModel
 from ...models.photo_model import PhotoModel
+from ...services.selection_manager import PhotoSelectionManager
+from ...operations.set_rating_operation import SetRatingOperation
+from ...operations.delete_photos_operation import DeletePhotosOperation
 
 
 class PhotoThumbnail(QLabel):
     """Clickable photo thumbnail widget - Works with PhotoModel only"""
     
-    clicked = Signal(object)  # Emits PhotoModel when clicked
+    clicked = Signal(object, object)  # Emits (PhotoModel, Qt.KeyboardModifiers)
     
     def __init__(self, photo: PhotoModel, parent=None):
         super().__init__(parent)
         self.photo = photo  # PhotoModel object, NOT dict!
+        self.is_selected = False
         self.setFixedSize(200, 250)
         self.setFrameStyle(QFrame.Box | QFrame.Plain)
-        self.setStyleSheet("""
-            QLabel {
-                background-color: #2b2b2b;
-                border: 2px solid #444;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QLabel:hover {
-                border-color: #0078d4;
-                background-color: #333;
-            }
-        """)
         self.setCursor(QCursor(Qt.PointingHandCursor))
+        self._update_style()
 
         # Layout
         container = QWidget(self)
@@ -67,6 +60,36 @@ class PhotoThumbnail(QLabel):
 
         container.setGeometry(5, 5, 190, 230)
     
+    def set_selected(self, selected: bool):
+        """Update visual selection state"""
+        self.is_selected = selected
+        self._update_style()
+    
+    def _update_style(self):
+        """Update stylesheet based on selection state"""
+        if self.is_selected:
+            self.setStyleSheet("""
+                QLabel {
+                    background-color: #1a5490;
+                    border: 3px solid #0078d4;
+                    border-radius: 4px;
+                    padding: 4px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QLabel {
+                    background-color: #2b2b2b;
+                    border: 2px solid #444;
+                    border-radius: 4px;
+                    padding: 5px;
+                }
+                QLabel:hover {
+                    border-color: #0078d4;
+                    background-color: #333;
+                }
+            """)
+    
     def set_image(self, image_data: bytes):
         """Set thumbnail image from bytes"""
         pixmap = QPixmap()
@@ -77,9 +100,10 @@ class PhotoThumbnail(QLabel):
             self.image_label.setText("No preview")
     
     def mousePressEvent(self, event):
-        """Handle click"""
+        """Handle click with keyboard modifiers"""
         if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.photo)
+            modifiers = QApplication.keyboardModifiers()
+            self.clicked.emit(self.photo, modifiers)
 
 
 class GalleryView(BaseView):
@@ -92,6 +116,13 @@ class GalleryView(BaseView):
     def __init__(self, api_client):
         self.api_client = api_client
         self.search_model = GallerySearchModel()
+        
+        # NEW: Selection manager
+        self.selection_manager = PhotoSelectionManager()
+        self.selection_manager.create_set("default")
+        self.selection_manager.set_active("default")
+        self.selection_manager.subscribe(self._on_selection_changed)
+        
         super().__init__()
     
     def _setup_ui(self):
@@ -117,6 +148,10 @@ class GalleryView(BaseView):
         filter_layout.addWidget(refresh_btn)
 
         self.main_layout.addLayout(filter_layout)
+        
+        # NEW: Selection/Operations toolbar
+        self.operations_toolbar = self._create_operations_toolbar()
+        self.main_layout.addWidget(self.operations_toolbar)
 
         # Status label
         self.status_label = QLabel("")
@@ -142,6 +177,63 @@ class GalleryView(BaseView):
         
         # Track last column count for resize detection
         self._last_cols = 0
+    
+    def _create_operations_toolbar(self):
+        """Create toolbar with selection controls and operation buttons"""
+        toolbar = QFrame()
+        toolbar.setStyleSheet("""
+            QFrame {
+                background-color: #2b2b2b;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 5px;
+            }
+        """)
+        layout = QHBoxLayout(toolbar)
+        layout.setContentsMargins(10, 5, 10, 5)
+        
+        # Selection info
+        self.selection_label = QLabel("0 selected")
+        self.selection_label.setStyleSheet("color: #fff; font-weight: bold; font-size: 11pt;")
+        layout.addWidget(self.selection_label)
+        
+        # Selection controls
+        btn_select_all = QPushButton("Select All")
+        btn_select_all.clicked.connect(self._select_all)
+        layout.addWidget(btn_select_all)
+        
+        btn_clear = QPushButton("Clear")
+        btn_clear.clicked.connect(lambda: self.selection_manager.clear())
+        layout.addWidget(btn_clear)
+        
+        layout.addStretch()
+        
+        # Operation buttons
+        self.op_buttons = []
+        
+        btn_rate = QPushButton("⭐ Set Rating")
+        btn_rate.clicked.connect(lambda: self._execute_operation(
+            SetRatingOperation(self.api_client, self)
+        ))
+        btn_rate.setToolTip("Set rating for selected photos (Ctrl+Click to select)")
+        self.op_buttons.append(btn_rate)
+        layout.addWidget(btn_rate)
+        
+        btn_delete = QPushButton("🗑️ Delete")
+        btn_delete.clicked.connect(lambda: self._execute_operation(
+            DeletePhotosOperation(self.api_client, self)
+        ))
+        btn_delete.setToolTip("Permanently delete selected photos")
+        btn_delete.setStyleSheet("QPushButton { color: #ff4444; }")
+        self.op_buttons.append(btn_delete)
+        layout.addWidget(btn_delete)
+        
+        # Initially hidden and disabled
+        for btn in self.op_buttons:
+            btn.setEnabled(False)
+        toolbar.setVisible(False)
+        
+        return toolbar
     
     def resizeEvent(self, event):
         """Handle resize - re-layout grid if needed"""
@@ -322,6 +414,10 @@ class GalleryView(BaseView):
                 image_data = self.search_model.get_thumbnail(photo.hothash)
                 if image_data:
                     thumb.set_image(image_data)
+                
+                # Set selection state
+                is_selected = self.selection_manager.is_selected(photo.hothash)
+                thumb.set_selected(is_selected)
         
         # Layout widgets in grid
         row = 0
@@ -337,9 +433,56 @@ class GalleryView(BaseView):
         
         self.status_label.setText(f"Displaying {len(photos)} photos")
     
-    def on_photo_clicked(self, photo: PhotoModel):
-        """Handle photo click - open detail view"""
-        from .photo_detail_dialog import PhotoDetailDialog
+    def on_photo_clicked(self, photo: PhotoModel, modifiers: Qt.KeyboardModifiers):
+        """Handle photo click with modifier keys"""
+        if modifiers & Qt.ControlModifier:
+            # Ctrl+Click: Toggle selection
+            is_selected = self.selection_manager.toggle(photo.hothash)
+            thumb = self.thumbnail_widgets.get(photo.hothash)
+            if thumb:
+                thumb.set_selected(is_selected)
         
-        dialog = PhotoDetailDialog(photo, self.api_client)
-        dialog.show()
+        elif modifiers & Qt.ShiftModifier:
+            # Shift+Click: Range select (future feature)
+            pass
+        
+        else:
+            # Normal click: Open detail view
+            from .photo_detail_dialog import PhotoDetailDialog
+            dialog = PhotoDetailDialog(photo, self.api_client)
+            dialog.show()
+    
+    # ========== Selection Management ==========
+    
+    def _select_all(self):
+        """Select all visible photos"""
+        photos = self.search_model.get_photos()
+        hothashes = [p.hothash for p in photos]
+        self.selection_manager.select_all(hothashes)
+        
+        # Update visuals
+        for thumb in self.thumbnail_widgets.values():
+            thumb.set_selected(True)
+    
+    def _on_selection_changed(self):
+        """Update UI when selection changes"""
+        count = self.selection_manager.count()
+        self.selection_label.setText(f"{count} selected")
+        
+        has_selection = count > 0
+        self.operations_toolbar.setVisible(has_selection)
+        
+        for btn in self.op_buttons:
+            btn.setEnabled(has_selection)
+    
+    def _execute_operation(self, operation):
+        """Execute operation on selected photos"""
+        photos = self.search_model.get_photos()
+        
+        # Execute through selection manager
+        should_refresh = self.selection_manager.execute_operation(operation, photos)
+        
+        # Refresh if needed
+        if should_refresh:
+            self.selection_manager.clear()
+            self.load_photos_from_server()
