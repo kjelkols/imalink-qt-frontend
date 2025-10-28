@@ -9,6 +9,8 @@ from PySide6.QtGui import QAction
 from ..storage.settings import Settings
 from ..api.client import APIClient
 from ..auth.auth_manager import AuthManager
+from ..services.thumbnail_cache import ThumbnailCache
+from ..services.selection_window_manager import SelectionWindowManager
 from .navigation import NavigationPanel
 from .login_dialog import LoginDialog
 from .register_dialog import RegisterDialog
@@ -32,6 +34,14 @@ class MainWindow(QMainWindow):
         self.settings = Settings()
         self.api_client = APIClient()
         self.auth_manager = AuthManager(self.api_client, self.settings)
+        
+        # Shared thumbnail cache and selection window manager
+        self.thumbnail_cache = ThumbnailCache()
+        self.selection_window_manager = SelectionWindowManager(
+            self.api_client, 
+            self.thumbnail_cache,
+            parent=self
+        )
         
         self._setup_ui()
         self._init_views()
@@ -151,15 +161,36 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
         
         # File menu
-        file_menu = menubar.addMenu("File")
+        file_menu = menubar.addMenu("&File")
         
-        logout_action = QAction("Logout", self)
+        # Selection submenu
+        selection_menu = file_menu.addMenu("&Selection")
+        
+        new_selection_action = QAction("&New Selection", self)
+        new_selection_action.setShortcut("Ctrl+Shift+N")
+        new_selection_action.triggered.connect(self._new_selection)
+        selection_menu.addAction(new_selection_action)
+        
+        open_selection_action = QAction("&Open Selection...", self)
+        open_selection_action.setShortcut("Ctrl+Shift+O")
+        open_selection_action.triggered.connect(self._open_selection)
+        selection_menu.addAction(open_selection_action)
+        
+        selection_menu.addSeparator()
+        
+        close_all_selections_action = QAction("&Close All Selections", self)
+        close_all_selections_action.triggered.connect(self._close_all_selections)
+        selection_menu.addAction(close_all_selections_action)
+        
+        file_menu.addSeparator()
+        
+        logout_action = QAction("&Logout", self)
         logout_action.triggered.connect(self._logout)
         file_menu.addAction(logout_action)
         
         file_menu.addSeparator()
         
-        exit_action = QAction("Exit", self)
+        exit_action = QAction("E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
@@ -187,7 +218,7 @@ class MainWindow(QMainWindow):
         """Initialize all views"""
         self.views = {
             'home': HomeView(self.api_client),
-            'gallery': GalleryView(self.api_client),
+            'gallery': GalleryView(self.api_client, self.thumbnail_cache, self.selection_window_manager),
             'import': ImportView(self.api_client, self.auth_manager),
             'stats': StatsView(self.api_client),
         }
@@ -309,6 +340,24 @@ class MainWindow(QMainWindow):
             self.show_info("Logged out")
             self._show_login()
     
+    def _new_selection(self):
+        """Create a new empty SelectionWindow"""
+        window = self.selection_window_manager.create_new_window()
+        window.show()
+        self.show_info(f"Created new selection: {window.selection_set.title}")
+    
+    def _open_selection(self):
+        """Open a SelectionWindow from file"""
+        window = self.selection_window_manager.open_file()
+        if window:
+            window.show()
+            self.show_info(f"Opened selection: {window.selection_set.title}")
+    
+    def _close_all_selections(self):
+        """Close all SelectionWindows"""
+        if self.selection_window_manager.close_all_windows():
+            self.show_info("All selection windows closed")
+    
     def _restore_state(self):
         """Restore window state from settings"""
         geometry = self.settings.get_window_geometry()
@@ -341,5 +390,23 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close"""
+        # Check for unsaved selection windows
+        if self.selection_window_manager.has_unsaved_changes():
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "Some selection windows have unsaved changes. Close anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
+        
+        # Close all selection windows
+        if not self.selection_window_manager.close_all_windows():
+            event.ignore()
+            return
+        
         self._save_state()
         event.accept()
