@@ -55,8 +55,7 @@ class SelectionWindowManager:
             self.window = SelectionWindow(
                 selection_set=selection_set,
                 api_client=self.api_client,
-                cache=self.cache,
-                parent=self.parent
+                cache=self.cache
             )
             
             # Connect close event
@@ -68,7 +67,7 @@ class SelectionWindowManager:
         
         return self.window
     
-    def _on_window_closed(self):
+    def _on_window_closed(self, window):
         """Handle window close event"""
         self.window = None
     
@@ -191,8 +190,7 @@ class SelectionWindowManager:
             self.window = SelectionWindow(
                 selection_set=selection_set,
                 api_client=self.api_client,
-                cache=self.cache,
-                parent=self.parent
+                cache=self.cache
             )
             
             self.window.closed.connect(self._on_window_closed)
