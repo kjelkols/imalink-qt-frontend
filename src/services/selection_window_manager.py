@@ -1,5 +1,5 @@
-"""SelectionWindowManager - Manages multiple SelectionWindow instances"""
-from typing import List, Optional
+"""SelectionWindowManager - Manages a single SelectionWindow instance"""
+from typing import Optional
 from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -10,10 +10,11 @@ from ..ui.windows.selection_window import SelectionWindow
 
 class SelectionWindowManager:
     """
-    Manages all open SelectionWindow instances.
+    Manages a single SelectionWindow instance (singleton pattern).
     
-    Provides centralized control for creating, opening, and closing
-    selection windows. Ensures proper cleanup and save confirmations.
+    Simplified model: Only one selection window can be open at a time.
+    This acts as a "working collection" similar to clipboard - photos
+    are copied here and can be saved to/loaded from .imalink files.
     """
     
     def __init__(self, api_client, cache: Optional[ThumbnailCache] = None, parent=None):
@@ -28,171 +29,240 @@ class SelectionWindowManager:
         self.api_client = api_client
         self.cache = cache or ThumbnailCache()
         self.parent = parent
-        self.windows: List[SelectionWindow] = []
-        self._untitled_counter = 0
+        self.window: Optional[SelectionWindow] = None
     
-    def create_new_window(self, title: Optional[str] = None, 
-                         description: str = "",
-                         hothashes: Optional[set] = None) -> SelectionWindow:
+    def get_or_create_window(self, hothashes: Optional[set] = None) -> SelectionWindow:
         """
-        Create a new SelectionWindow with an empty or initial set.
+        Get existing window or create new one if none exists.
+        
+        If window exists, optionally add photos to it.
+        If window doesn't exist, create with initial photos.
         
         Args:
-            title: Title for the selection (auto-generated if None)
-            description: Description text
-            hothashes: Initial set of photo hashes (empty if None)
+            hothashes: Optional set of photo hashes to add
             
         Returns:
-            New SelectionWindow instance
+            The SelectionWindow instance
         """
-        if title is None:
-            self._untitled_counter += 1
-            title = f"Untitled Selection {self._untitled_counter}"
-        
-        selection_set = SelectionSet(
-            title=title,
-            description=description,
-            hothashes=hothashes or set()
-        )
-        
-        window = SelectionWindow(selection_set, self.api_client, self.cache)
-        window.closed.connect(self._on_window_closed)
-        self.windows.append(window)
-        
-        return window
-    
-    def open_file(self, filepath: Optional[str] = None) -> Optional[SelectionWindow]:
-        """
-        Open a SelectionWindow from a saved .imalink file.
-        
-        Args:
-            filepath: Path to .imalink file (shows dialog if None)
-            
-        Returns:
-            Opened SelectionWindow or None if cancelled/failed
-        """
-        if filepath is None:
-            default_dir = str(Path.home() / "Pictures" / "ImaLink" / "Selections")
-            filepath, _ = QFileDialog.getOpenFileName(
-                self.parent,
-                "Open Selection",
-                default_dir,
-                "ImaLink Selection (*.imalink);;JSON Files (*.json);;All Files (*)"
+        if self.window is None:
+            # Create new window with empty or initial selection
+            selection_set = SelectionSet(
+                title="Working Selection",
+                description="",
+                hothashes=hothashes or set()
             )
             
-            if not filepath:
-                return None
+            self.window = SelectionWindow(
+                selection_set=selection_set,
+                api_client=self.api_client,
+                cache=self.cache,
+                parent=self.parent
+            )
+            
+            # Connect close event
+            self.window.closed.connect(self._on_window_closed)
+            
+        elif hothashes:
+            # Window exists - add photos to it
+            self.window.add_photos(hothashes)
+        
+        return self.window
+    
+    def _on_window_closed(self):
+        """Handle window close event"""
+        self.window = None
+    
+    def has_window(self) -> bool:
+        """Check if window is currently open"""
+        return self.window is not None
+    
+    def show_window(self):
+        """Show and raise the window if it exists"""
+        if self.window:
+            self.window.show()
+            self.window.raise_()
+            self.window.activateWindow()
+    
+    def save_selection(self) -> bool:
+        """
+        Save current selection to its file.
+        
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        if not self.window:
+            return False
+        
+        if not self.window.selection_set.file_path:
+            # No file path - do "Save As" instead
+            return self.save_selection_as()
         
         try:
-            # Check if already open
-            for window in self.windows:
-                if window.selection_set.filepath == filepath:
-                    window.raise_()
-                    window.activateWindow()
-                    return window
+            self.window.selection_set.save()
+            self.window.update_title()
+            return True
+        except Exception as e:
+            QMessageBox.critical(
+                self.parent,
+                "Save Failed",
+                f"Failed to save selection:\n{e}"
+            )
+            return False
+    
+    def save_selection_as(self) -> bool:
+        """
+        Save selection with new filename.
+        
+        Returns:
+            True if saved successfully, False if cancelled
+        """
+        if not self.window:
+            return False
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.parent,
+            "Save Selection As",
+            str(Path.home()),
+            "ImaLink Selection (*.imalink)"
+        )
+        
+        if not file_path:
+            return False
+        
+        # Ensure .imalink extension
+        if not file_path.endswith('.imalink'):
+            file_path += '.imalink'
+        
+        try:
+            self.window.selection_set.save(Path(file_path))
+            self.window.update_title()
+            return True
+        except Exception as e:
+            QMessageBox.critical(
+                self.parent,
+                "Save Failed",
+                f"Failed to save selection:\n{e}"
+            )
+            return False
+    
+    def open_selection(self) -> bool:
+        """
+        Open selection from file.
+        
+        Prompts to save if current selection has unsaved changes.
+        
+        Returns:
+            True if opened successfully, False if cancelled
+        """
+        # Check for unsaved changes
+        if self.window and self.window.selection_set.is_modified:
+            reply = QMessageBox.question(
+                self.parent,
+                "Unsaved Changes",
+                "Current selection has unsaved changes. Save before opening new selection?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
             
-            # Load from file
-            selection_set = SelectionSet.load(filepath)
+            if reply == QMessageBox.Cancel:
+                return False
+            elif reply == QMessageBox.Yes:
+                if not self.save_selection():
+                    return False
+        
+        # Choose file
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.parent,
+            "Open Selection",
+            str(Path.home()),
+            "ImaLink Selection (*.imalink)"
+        )
+        
+        if not file_path:
+            return False
+        
+        try:
+            selection_set = SelectionSet.load(Path(file_path))
             
-            # Create window
-            window = SelectionWindow(selection_set, self.api_client, self.cache)
-            window.closed.connect(self._on_window_closed)
-            self.windows.append(window)
+            # Close existing window if any
+            if self.window:
+                self.window.close()
             
-            return window
+            # Create new window with loaded selection
+            self.window = SelectionWindow(
+                selection_set=selection_set,
+                api_client=self.api_client,
+                cache=self.cache,
+                parent=self.parent
+            )
+            
+            self.window.closed.connect(self._on_window_closed)
+            self.window.show()
+            
+            return True
             
         except Exception as e:
             QMessageBox.critical(
                 self.parent,
-                "Open Error",
+                "Open Failed",
                 f"Failed to open selection:\n{e}"
             )
-            return None
+            return False
     
-    def get_open_windows(self) -> List[SelectionWindow]:
-        """Get list of all open SelectionWindow instances"""
-        return self.windows.copy()
-    
-    def get_window_count(self) -> int:
-        """Get number of open windows"""
-        return len(self.windows)
-    
-    def find_window_by_title(self, title: str) -> Optional[SelectionWindow]:
+    def clear_selection(self) -> bool:
         """
-        Find window by selection title.
+        Clear all photos from selection.
         
-        Args:
-            title: Title to search for
-            
-        Returns:
-            SelectionWindow or None if not found
-        """
-        for window in self.windows:
-            if window.selection_set.title == title:
-                return window
-        return None
-    
-    def close_all_windows(self) -> bool:
-        """
-        Close all open SelectionWindows.
-        
-        Asks user to save modified selections.
+        Prompts for confirmation.
         
         Returns:
-            True if all windows closed, False if user cancelled any
+            True if cleared, False if cancelled
         """
-        # Work on a copy since list changes during iteration
-        for window in self.windows[:]:
-            if not window.close():
-                # User cancelled close
-                return False
+        if not self.window:
+            return False
         
-        return True
+        if len(self.window.selection_set) == 0:
+            return True  # Already empty
+        
+        reply = QMessageBox.question(
+            self.parent,
+            "Clear Selection",
+            f"Remove all {len(self.window.selection_set)} photos from selection?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.window.clear_all_photos()
+            return True
+        
+        return False
     
-    def _on_window_closed(self, window: SelectionWindow):
+    def close_window(self) -> bool:
         """
-        Called when a window is closed.
+        Close the selection window.
         
-        Args:
-            window: The SelectionWindow that was closed
+        Prompts to save if there are unsaved changes.
+        
+        Returns:
+            True if closed, False if cancelled
         """
-        if window in self.windows:
-            self.windows.remove(window)
+        if not self.window:
+            return True
+        
+        # Let the window handle its own close event
+        # (it will prompt for unsaved changes)
+        self.window.close()
+        
+        return self.window is None  # True if successfully closed
     
     def has_unsaved_changes(self) -> bool:
-        """Check if any window has unsaved changes"""
-        return any(w.selection_set.is_modified for w in self.windows)
+        """Check if window has unsaved changes"""
+        return self.window is not None and self.window.selection_set.is_modified
     
-    def get_modified_windows(self) -> List[SelectionWindow]:
-        """Get list of windows with unsaved changes"""
-        return [w for w in self.windows if w.selection_set.is_modified]
-    
-    def save_all(self) -> bool:
-        """
-        Save all modified windows.
-        
-        Returns:
-            True if all saved successfully, False if any failed/cancelled
-        """
-        for window in self.get_modified_windows():
-            window.save()
-            if window.selection_set.is_modified:
-                # Save was cancelled or failed
-                return False
+    def __bool__(self) -> bool:
+        """Always return True for boolean checks (fixes 'if manager:' issue)"""
         return True
-    
-    def __len__(self) -> int:
-        """Allow len(manager)"""
-        return len(self.windows)
-    
-    def __iter__(self):
-        """Allow iteration over windows"""
-        return iter(self.windows)
-    
-    def __contains__(self, window: SelectionWindow) -> bool:
-        """Allow 'window in manager'"""
-        return window in self.windows
     
     def __repr__(self) -> str:
         """Debug representation"""
-        return f"SelectionWindowManager({len(self.windows)} windows)"
+        status = "open" if self.window else "no window"
+        return f"SelectionWindowManager({status})"

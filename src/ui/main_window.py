@@ -166,21 +166,32 @@ class MainWindow(QMainWindow):
         # Selection submenu
         selection_menu = file_menu.addMenu("&Selection")
         
-        new_selection_action = QAction("&New Selection", self)
-        new_selection_action.setShortcut("Ctrl+Shift+N")
-        new_selection_action.triggered.connect(self._new_selection)
-        selection_menu.addAction(new_selection_action)
+        save_selection_action = QAction("&Save Selection", self)
+        save_selection_action.setShortcut("Ctrl+S")
+        save_selection_action.triggered.connect(self._save_selection)
+        selection_menu.addAction(save_selection_action)
+        
+        save_selection_as_action = QAction("Save Selection &As...", self)
+        save_selection_as_action.setShortcut("Ctrl+Shift+S")
+        save_selection_as_action.triggered.connect(self._save_selection_as)
+        selection_menu.addAction(save_selection_as_action)
         
         open_selection_action = QAction("&Open Selection...", self)
-        open_selection_action.setShortcut("Ctrl+Shift+O")
+        open_selection_action.setShortcut("Ctrl+O")
         open_selection_action.triggered.connect(self._open_selection)
         selection_menu.addAction(open_selection_action)
         
         selection_menu.addSeparator()
         
-        close_all_selections_action = QAction("&Close All Selections", self)
-        close_all_selections_action.triggered.connect(self._close_all_selections)
-        selection_menu.addAction(close_all_selections_action)
+        clear_selection_action = QAction("&Clear Selection", self)
+        clear_selection_action.triggered.connect(self._clear_selection)
+        selection_menu.addAction(clear_selection_action)
+        
+        selection_menu.addSeparator()
+        
+        close_selection_action = QAction("Close Selection &Window", self)
+        close_selection_action.triggered.connect(self._close_selection_window)
+        selection_menu.addAction(close_selection_action)
         
         file_menu.addSeparator()
         
@@ -340,23 +351,30 @@ class MainWindow(QMainWindow):
             self.show_info("Logged out")
             self._show_login()
     
-    def _new_selection(self):
-        """Create a new empty SelectionWindow"""
-        window = self.selection_window_manager.create_new_window()
-        window.show()
-        self.show_info(f"Created new selection: {window.selection_set.title}")
+    def _save_selection(self):
+        """Save current selection"""
+        if self.selection_window_manager.save_selection():
+            self.show_info("Selection saved")
+    
+    def _save_selection_as(self):
+        """Save selection with new filename"""
+        if self.selection_window_manager.save_selection_as():
+            self.show_info("Selection saved")
     
     def _open_selection(self):
         """Open a SelectionWindow from file"""
-        window = self.selection_window_manager.open_file()
-        if window:
-            window.show()
-            self.show_info(f"Opened selection: {window.selection_set.title}")
+        if self.selection_window_manager.open_selection():
+            self.show_info("Selection opened")
     
-    def _close_all_selections(self):
-        """Close all SelectionWindows"""
-        if self.selection_window_manager.close_all_windows():
-            self.show_info("All selection windows closed")
+    def _clear_selection(self):
+        """Clear all photos from selection"""
+        if self.selection_window_manager.clear_selection():
+            self.show_info("Selection cleared")
+    
+    def _close_selection_window(self):
+        """Close the SelectionWindow"""
+        if self.selection_window_manager.close_window():
+            self.show_info("Selection window closed")
     
     def _restore_state(self):
         """Restore window state from settings"""
@@ -390,23 +408,28 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close"""
-        # Check for unsaved selection windows
+        # Check for unsaved selection window
         if self.selection_window_manager.has_unsaved_changes():
             reply = QMessageBox.question(
                 self,
                 "Unsaved Changes",
-                "Some selection windows have unsaved changes. Close anyway?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                "Selection has unsaved changes. Save before closing?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Cancel
             )
-            if reply == QMessageBox.No:
+            if reply == QMessageBox.Cancel:
                 event.ignore()
                 return
+            elif reply == QMessageBox.Yes:
+                if not self.selection_window_manager.save_selection():
+                    # Save was cancelled
+                    event.ignore()
+                    return
         
-        # Close all selection windows
-        if not self.selection_window_manager.close_all_windows():
-            event.ignore()
-            return
+        # Close selection window if open
+        if self.selection_window_manager.has_window():
+            self.selection_window_manager.window.close()
         
+        # Save window state
         self._save_state()
         event.accept()

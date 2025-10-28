@@ -232,7 +232,7 @@ class GalleryView(BaseView):
         layout.addWidget(btn_rate)
         
         # Copy to Selection button
-        if self.selection_window_manager:
+        if self.selection_window_manager is not None:
             btn_copy_to_selection = QPushButton("📋 Copy to Selection...")
             btn_copy_to_selection.clicked.connect(self._copy_to_selection)
             btn_copy_to_selection.setToolTip("Copy selected photos to a Selection window")
@@ -566,88 +566,18 @@ class GalleryView(BaseView):
             self.load_photos_from_server()
     
     def _copy_to_selection(self):
-        """Copy selected photos to a SelectionWindow"""
-        if not self.selection_window_manager:
+        """Copy selected photos to the SelectionWindow"""
+        if self.selection_window_manager is None:
             return
         
-        selected = self.selection_manager.get_selected()
+        selected = self.selection_manager.get_selected_hothashes()
         if not selected:
             return
         
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLabel
+        # Get or create window and add photos
+        window = self.selection_window_manager.get_or_create_window(set(selected))
+        window.show()
+        window.raise_()
+        window.activateWindow()
         
-        # Dialog to choose: New or Existing window
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Copy to Selection")
-        dialog.setMinimumWidth(400)
-        
-        layout = QVBoxLayout(dialog)
-        
-        label = QLabel(f"Copy {len(selected)} photo(s) to:")
-        layout.addWidget(label)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        
-        btn_new = QPushButton("📄 New Selection")
-        btn_new.clicked.connect(lambda: dialog.done(1))
-        btn_layout.addWidget(btn_new)
-        
-        # List existing windows if any
-        open_windows = self.selection_window_manager.get_open_windows()
-        if open_windows:
-            btn_existing = QPushButton(f"📂 Existing Selection ({len(open_windows)})")
-            btn_existing.clicked.connect(lambda: dialog.done(2))
-            btn_layout.addWidget(btn_existing)
-        
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(dialog.reject)
-        btn_layout.addWidget(btn_cancel)
-        
-        layout.addLayout(btn_layout)
-        
-        result = dialog.exec()
-        
-        if result == 1:
-            # New selection
-            window = self.selection_window_manager.create_new_window(
-                title="New Selection",
-                hothashes=selected
-            )
-            window.show()
-            self.status_info.emit(f"Copied {len(selected)} photos to new selection")
-        
-        elif result == 2:
-            # Choose from existing
-            choose_dialog = QDialog(self)
-            choose_dialog.setWindowTitle("Choose Selection")
-            choose_dialog.setMinimumSize(400, 300)
-            
-            choose_layout = QVBoxLayout(choose_dialog)
-            choose_label = QLabel("Select a window:")
-            choose_layout.addWidget(choose_label)
-            
-            list_widget = QListWidget()
-            for window in open_windows:
-                title = window.selection_set.title
-                count = len(window.selection_set)
-                list_widget.addItem(f"{title} ({count} photos)")
-            choose_layout.addWidget(list_widget)
-            
-            btn_box = QHBoxLayout()
-            btn_ok = QPushButton("OK")
-            btn_ok.clicked.connect(choose_dialog.accept)
-            btn_box.addWidget(btn_ok)
-            
-            btn_cancel2 = QPushButton("Cancel")
-            btn_cancel2.clicked.connect(choose_dialog.reject)
-            btn_box.addWidget(btn_cancel2)
-            
-            choose_layout.addLayout(btn_box)
-            
-            if choose_dialog.exec() == QDialog.Accepted and list_widget.currentRow() >= 0:
-                target_window = open_windows[list_widget.currentRow()]
-                target_window.add_photos(selected)
-                target_window.raise_()
-                target_window.activateWindow()
-                self.status_info.emit(f"Copied {len(selected)} photos to '{target_window.selection_set.title}'")
+        self.status_info.emit(f"Copied {len(selected)} photos to selection")
