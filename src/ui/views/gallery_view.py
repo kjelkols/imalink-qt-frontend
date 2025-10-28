@@ -10,13 +10,13 @@ from ...models.gallery_model import GallerySearchModel
 from ...models.photo_model import PhotoModel
 from ...services.selection_manager import PhotoSelectionManager
 from ...operations.set_rating_operation import SetRatingOperation
-from ...operations.delete_photos_operation import DeletePhotosOperation
 
 
 class PhotoThumbnail(QLabel):
     """Clickable photo thumbnail widget - Works with PhotoModel only"""
     
-    clicked = Signal(object, object)  # Emits (PhotoModel, Qt.KeyboardModifiers)
+    single_clicked = Signal(object, object)  # Emits (PhotoModel, Qt.KeyboardModifiers)
+    double_clicked = Signal(object)  # Emits PhotoModel
     
     def __init__(self, photo: PhotoModel, parent=None):
         super().__init__(parent)
@@ -99,11 +99,16 @@ class PhotoThumbnail(QLabel):
         else:
             self.image_label.setText("No preview")
     
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click - open detail view"""
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self.photo)
+    
     def mousePressEvent(self, event):
-        """Handle click with keyboard modifiers"""
+        """Handle single click - toggle selection"""
         if event.button() == Qt.LeftButton:
             modifiers = QApplication.keyboardModifiers()
-            self.clicked.emit(self.photo, modifiers)
+            self.single_clicked.emit(self.photo, modifiers)
 
 
 class GalleryView(BaseView):
@@ -122,6 +127,9 @@ class GalleryView(BaseView):
         self.selection_manager.create_set("default")
         self.selection_manager.set_active("default")
         self.selection_manager.subscribe(self._on_selection_changed)
+        
+        # Track last clicked photo for range selection
+        self._last_clicked_hothash = None
         
         super().__init__()
     
@@ -218,15 +226,6 @@ class GalleryView(BaseView):
         btn_rate.setToolTip("Set rating for selected photos (Ctrl+Click to select)")
         self.op_buttons.append(btn_rate)
         layout.addWidget(btn_rate)
-        
-        btn_delete = QPushButton("🗑️ Delete")
-        btn_delete.clicked.connect(lambda: self._execute_operation(
-            DeletePhotosOperation(self.api_client, self)
-        ))
-        btn_delete.setToolTip("Permanently delete selected photos")
-        btn_delete.setStyleSheet("QPushButton { color: #ff4444; }")
-        self.op_buttons.append(btn_delete)
-        layout.addWidget(btn_delete)
         
         # Initially hidden and disabled
         for btn in self.op_buttons:
@@ -407,7 +406,8 @@ class GalleryView(BaseView):
         if not self.thumbnail_widgets:
             for photo in photos:
                 thumb = PhotoThumbnail(photo)  # Pass PhotoModel, not dict
-                thumb.clicked.connect(self.on_photo_clicked)
+                thumb.single_clicked.connect(self.on_photo_single_clicked)
+                thumb.double_clicked.connect(self.on_photo_double_clicked)
                 self.thumbnail_widgets[photo.hothash] = thumb
                 
                 # Set image from cache
@@ -433,24 +433,85 @@ class GalleryView(BaseView):
         
         self.status_label.setText(f"Displaying {len(photos)} photos")
     
-    def on_photo_clicked(self, photo: PhotoModel, modifiers: Qt.KeyboardModifiers):
-        """Handle photo click with modifier keys"""
-        if modifiers & Qt.ControlModifier:
-            # Ctrl+Click: Toggle selection
+    def on_photo_single_clicked(self, photo: PhotoModel, modifiers: Qt.KeyboardModifiers):
+        """Handle single click - Windows Explorer style selection"""
+        if modifiers & Qt.ShiftModifier and self._last_clicked_hothash:
+            # Shift+Click: Range selection
+            self._select_range(self._last_clicked_hothash, photo.hothash)
+        
+        elif modifiers & Qt.ControlModifier:
+            # Ctrl+Click: Toggle individual without clearing others
             is_selected = self.selection_manager.toggle(photo.hothash)
             thumb = self.thumbnail_widgets.get(photo.hothash)
             if thumb:
                 thumb.set_selected(is_selected)
-        
-        elif modifiers & Qt.ShiftModifier:
-            # Shift+Click: Range select (future feature)
-            pass
+            self._last_clicked_hothash = photo.hothash
         
         else:
-            # Normal click: Open detail view
-            from .photo_detail_dialog import PhotoDetailDialog
-            dialog = PhotoDetailDialog(photo, self.api_client)
-            dialog.show()
+            # Normal click: Toggle selection (clear others first)
+            self.selection_manager.clear()
+            for thumb in self.thumbnail_widgets.values():
+                thumb.set_selected(False)
+            
+            is_selected = self.selection_manager.toggle(photo.hothash)
+            thumb = self.thumbnail_widgets.get(photo.hothash)
+            if thumb:
+                thumb.set_selected(is_selected)
+            self._last_clicked_hothash = photo.hothash
+    
+    def on_photo_double_clicked(self, photo: PhotoModel):
+        """Handle double-click - open detail view"""
+        from .photo_detail_dialog import PhotoDetailDialog
+        dialog = PhotoDetailDialog(photo, self.api_client)
+        dialog.show()
+    
+    def _select_range(self, start_hothash: str, end_hothash: str):
+        """Select all photos between start and end (inclusive)"""
+        photos = self.search_model.get_photos()
+        hothashes = [p.hothash for p in photos]
+        
+        try:
+            start_idx = hothashes.index(start_hothash)
+            end_idx = hothashes.index(end_hothash)
+            
+            # Ensure correct order
+            if start_idx > end_idx:
+                start_idx, end_idx = end_idx, start_idx
+            
+            # Select range
+            for idx in range(start_idx, end_idx + 1):
+                hothash = hothashes[idx]
+                self.selection_manager.select(hothash)
+                thumb = self.thumbnail_widgets.get(hothash)
+                if thumb:
+                    thumb.set_selected(True)
+            
+            self._last_clicked_hothash = end_hothash
+        
+        except ValueError:
+            # Photo not found in list, just toggle current
+            is_selected = self.selection_manager.toggle(end_hothash)
+            thumb = self.thumbnail_widgets.get(end_hothash)
+            if thumb:
+                thumb.set_selected(is_selected)
+            self._last_clicked_hothash = end_hothash
+    
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts - Windows Explorer style"""
+        if event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
+            # Ctrl+A: Select all
+            self._select_all()
+            event.accept()
+        
+        elif event.key() == Qt.Key_Escape:
+            # Escape: Clear selection
+            self.selection_manager.clear()
+            for thumb in self.thumbnail_widgets.values():
+                thumb.set_selected(False)
+            event.accept()
+        
+        else:
+            super().keyPressEvent(event)
     
     # ========== Selection Management ==========
     
