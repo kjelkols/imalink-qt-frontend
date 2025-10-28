@@ -3,9 +3,9 @@ from typing import List, Optional
 from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
-from ...models.selection_set import SelectionSet
-from ...services.thumbnail_cache import ThumbnailCache
-from ..windows.selection_window import SelectionWindow
+from ..models.selection_set import SelectionSet
+from .thumbnail_cache import ThumbnailCache
+from ..ui.windows.selection_window import SelectionWindow
 
 
 class SelectionWindowManager:
