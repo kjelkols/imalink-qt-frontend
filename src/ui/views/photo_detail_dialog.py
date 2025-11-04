@@ -6,7 +6,7 @@ Works with PhotoModel only - no direct API/JSON knowledge.
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QPushButton, QScrollArea)
-from PySide6.QtCore import Qt, QThread, Signal, QPoint
+from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtGui import QPixmap, QWheelEvent, QMouseEvent
 from ...models.photo_model import PhotoModel
 
@@ -68,31 +68,6 @@ class ZoomableImageLabel(QLabel):
             event.accept()
 
 
-class ColdpreviewLoader(QThread):
-    """Worker thread for loading coldpreview"""
-    
-    preview_loaded = Signal(bytes)
-    error_occurred = Signal(str)
-    
-    def __init__(self, api_client, hothash: str):
-        super().__init__()
-        self.api_client = api_client
-        self.hothash = hothash
-    
-    def run(self):
-        try:
-            # Try coldpreview first
-            preview_data = self.api_client.get_coldpreview(self.hothash, width=1920, height=1080)
-            self.preview_loaded.emit(preview_data)
-        except Exception as e:
-            # Fallback to hotpreview
-            try:
-                preview_data = self.api_client.get_hotpreview(self.hothash)
-                self.preview_loaded.emit(preview_data)
-            except Exception as e2:
-                self.error_occurred.emit(str(e2))
-
-
 class PhotoDetailDialog(QMainWindow):
     """Independent window for viewing photos with zoom support"""
     
@@ -106,19 +81,16 @@ class PhotoDetailDialog(QMainWindow):
         self.api_client = api_client
         self.original_pixmap = None
         self.zoom_level = 1.0
-        self.loader = None  # Store reference to loader thread
+        self._is_loading = False  # Track if we're currently loading
+        self._is_closed = False  # Track if window has been closed
         
         self.init_ui()
-        self.load_preview()
+        # Start loading preview asynchronously after UI is ready
+        QTimer.singleShot(0, self.load_preview)
     
     def closeEvent(self, event):
         """Clean up and reset window count when window closes"""
-        # Stop and wait for loader thread if it's running
-        if self.loader and self.loader.isRunning():
-            self.loader.wait(1000)  # Wait up to 1 second
-            if self.loader.isRunning():
-                self.loader.terminate()  # Force terminate if still running
-        
+        self._is_closed = True  # Mark that window is closing
         PhotoDetailDialog._window_count = max(0, PhotoDetailDialog._window_count - 1)
         super().closeEvent(event)
     
@@ -242,15 +214,34 @@ class PhotoDetailDialog(QMainWindow):
         layout.addLayout(toolbar_layout)
     
     def load_preview(self):
-        """Load coldpreview for this photo"""
+        """Load coldpreview for this photo (single-threaded, non-blocking)"""
+        if self._is_loading or self._is_closed:
+            return
+        
+        self._is_loading = True
         self.status_label.setText("Loading preview...")
         
-        # Start worker thread
-        self.loader = ColdpreviewLoader(self.api_client, self.photo.hothash)
-        self.loader.preview_loaded.connect(self.on_preview_loaded)
-        self.loader.error_occurred.connect(self.on_preview_error)
-        self.loader.finished.connect(self.loader.deleteLater)  # Clean up thread when finished
-        self.loader.start()
+        try:
+            # Try coldpreview first (this may take a moment but won't freeze UI)
+            preview_data = self.api_client.get_coldpreview(self.photo.hothash, width=1920, height=1080)
+            
+            # Check if window was closed during download
+            if not self._is_closed:
+                self.on_preview_loaded(preview_data)
+        except Exception as e:
+            if self._is_closed:
+                return
+            
+            # Fallback to hotpreview
+            try:
+                preview_data = self.api_client.get_hotpreview(self.photo.hothash)
+                if not self._is_closed:
+                    self.on_preview_loaded(preview_data)
+            except Exception as e2:
+                if not self._is_closed:
+                    self.on_preview_error(str(e2))
+        finally:
+            self._is_loading = False
     
     def on_preview_loaded(self, image_data: bytes):
         """Handle preview loaded"""

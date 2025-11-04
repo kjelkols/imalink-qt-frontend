@@ -16,25 +16,10 @@ class AuthManager(QObject):
         self.api_client = api_client
         self.settings = settings
         self.current_user: Optional[Dict[str, Any]] = None
-        self.auth_disabled = os.environ.get('DISABLE_AUTH', '').lower() in ('true', '1', 'yes')
         
-        print(f"[AuthManager] DISABLE_AUTH env var: {os.environ.get('DISABLE_AUTH', 'NOT SET')}")
-        print(f"[AuthManager] auth_disabled: {self.auth_disabled}")
-        
-        # If auth is disabled, auto-login as guest
-        if self.auth_disabled:
-            print("[AuthManager] Auth disabled, auto-logging in as guest")
-            self.current_user = {
-                'id': 0,
-                'username': 'guest',
-                'display_name': 'Guest User',
-                'email': 'guest@localhost'
-            }
-            self.logged_in.emit(self.current_user)
-        else:
-            print("[AuthManager] Auth enabled, trying to restore token")
-            # Try to restore token on init
-            self._restore_token()
+        print("[AuthManager] Initializing with authentication enabled")
+        # Try to restore token on init
+        self._restore_token()
     
     def _restore_token(self):
         """Restore token from settings if exists"""
