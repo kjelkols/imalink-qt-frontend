@@ -7,11 +7,11 @@ class APIClient:
     """
     API client for ImaLink backend v2.1
     
-    Base URL: http://localhost:8000/api/v1
+    Base URL: https://api.trollfjell.com/api/v1
     Authentication: JWT Bearer tokens
     """
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "https://api.trollfjell.com"):
         self.base_url = base_url
         self.token: Optional[str] = None
     
