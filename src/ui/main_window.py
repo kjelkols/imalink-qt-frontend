@@ -21,6 +21,7 @@ from .views.import_view import ImportView
 from .views.stats_view import StatsView
 from .views.search_management_view import SearchManagementView
 from .views.timeline_view import TimelineView
+from .views.viewer_view import ViewerView
 
 
 class MainWindow(QMainWindow):
@@ -219,6 +220,7 @@ class MainWindow(QMainWindow):
             'organizer': CollectionsView(self.api_client, self.thumbnail_cache),
             'import': ImportView(self.api_client, self.auth_manager),
             'timeline': TimelineView(self.api_client),
+            'viewer': ViewerView(self.api_client),
             'stats': StatsView(self.api_client),
             'searches': SearchManagementView(self.api_client),
         }
@@ -232,6 +234,7 @@ class MainWindow(QMainWindow):
         self.nav_panel.add_button("Organizer", "organizer")
         self.nav_panel.add_button("Import", "import")
         self.nav_panel.add_button("Timeline", "timeline")
+        self.nav_panel.add_button("Viewer", "viewer")
         self.nav_panel.add_button("Searches", "searches")
         self.nav_panel.add_button("Stats", "stats")
         self.nav_panel.finish_layout()
@@ -280,6 +283,13 @@ class MainWindow(QMainWindow):
         # Trigger on_show
         if hasattr(view, 'on_show'):
             view.on_show()
+    
+    def show_photo_in_viewer(self, photo):
+        """Show a photo in the viewer view"""
+        viewer = self.views.get('viewer')
+        if viewer:
+            self.show_view('viewer')
+            viewer.show_photo(photo)
     
     def show_error(self, message):
         """Show error in statusbar"""

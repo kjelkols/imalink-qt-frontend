@@ -443,10 +443,12 @@ class PhotoGridWidget(QWidget):
         self.refresh_view()
     
     def _on_photo_double_clicked(self, photo: PhotoModel):
-        """Handle double-click - open detail view"""
-        from ..views.photo_detail_dialog import PhotoDetailDialog
-        dialog = PhotoDetailDialog(photo, self.api_client)
-        dialog.show()
+        """Handle double-click - show in viewer"""
+        # Emit signal to main window to switch to viewer
+        from PySide6.QtWidgets import QApplication
+        main_window = QApplication.instance().activeWindow()
+        if main_window and hasattr(main_window, 'show_photo_in_viewer'):
+            main_window.show_photo_in_viewer(photo)
     
     def _select_range(self, start_hothash: str, end_hothash: str):
         """Select all photos between start and end (inclusive) - update STATE only"""
