@@ -219,7 +219,7 @@ class PhotoDetailDialog(QMainWindow):
             return
         
         self._is_loading = True
-        self.status_label.setText("Loading preview...")
+        self.status_label.setText("Loading coldpreview...")
         
         try:
             # Try coldpreview first (this may take a moment but won't freeze UI)
@@ -227,23 +227,28 @@ class PhotoDetailDialog(QMainWindow):
             
             # Check if window was closed during download
             if not self._is_closed:
-                self.on_preview_loaded(preview_data)
+                self.on_preview_loaded(preview_data, "coldpreview")
         except Exception as e:
             if self._is_closed:
                 return
             
             # Fallback to hotpreview
+            error_msg = str(e)
+            print(f"⚠️ Coldpreview failed for {self.photo.display_filename}: {error_msg}")
+            
             try:
+                self.status_label.setText("Coldpreview unavailable, loading hotpreview...")
                 preview_data = self.api_client.get_hotpreview(self.photo.hothash)
                 if not self._is_closed:
-                    self.on_preview_loaded(preview_data)
+                    self.on_preview_loaded(preview_data, "hotpreview (⚠️ coldpreview failed)")
             except Exception as e2:
+                print(f"❌ Hotpreview also failed: {e2}")
                 if not self._is_closed:
                     self.on_preview_error(str(e2))
         finally:
             self._is_loading = False
     
-    def on_preview_loaded(self, image_data: bytes):
+    def on_preview_loaded(self, image_data: bytes, source: str = "preview"):
         """Handle preview loaded"""
         pixmap = QPixmap()
         if pixmap.loadFromData(image_data):
@@ -261,7 +266,7 @@ class PhotoDetailDialog(QMainWindow):
             else:
                 size_str = f"{size_kb/1024:.1f} MB"
             
-            self.status_label.setText(f"Preview loaded • {pixmap.width()}×{pixmap.height()}px • {size_str}")
+            self.status_label.setText(f"{source.title()} • {pixmap.width()}×{pixmap.height()}px • {size_str}")
         else:
             self.image_label.setText("Failed to load preview")
             self.status_label.setText("Failed to decode image data")
