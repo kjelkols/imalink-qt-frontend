@@ -1,6 +1,6 @@
 """ThumbnailCache - Shared cache for thumbnails and photo metadata
 
-This cache is shared between Gallery and all SelectionWindows to avoid
+This cache is shared between all views and SelectionWindows to avoid
 re-downloading the same thumbnails and photo data multiple times.
 """
 from typing import Dict, Optional
@@ -11,7 +11,7 @@ class ThumbnailCache:
     """
     Singleton cache for thumbnail images and PhotoModel objects.
     
-    Shared across Gallery and all SelectionWindows to minimize API calls.
+    Shared across all views and SelectionWindows to minimize API calls.
     Stores both thumbnail image data (bytes) and full PhotoModel objects.
     """
     

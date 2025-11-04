@@ -47,8 +47,16 @@ class PhotoModel:
     primary_filename: Optional[str] = None
     image_files: List[ImageFileModel] = field(default_factory=list)
     taken_at: Optional[datetime] = None
-    import_session_id: Optional[int] = None
     rating: Optional[int] = None
+    
+    # Import tracking (backend schema updated)
+    import_session_id: Optional[int] = None    # Import session that created this photo
+    first_imported: Optional[datetime] = None  # Earliest file import time
+    last_imported: Optional[datetime] = None   # Latest file import time
+    
+    # Computed flags from backend
+    has_gps: bool = False
+    has_raw_companion: bool = False
     
     # EXIF metadata
     camera_make: Optional[str] = None
@@ -114,11 +122,6 @@ class PhotoModel:
             parts.append(f"ISO {self.iso}")
         return " • ".join(parts) if parts else ""
     
-    @property
-    def has_gps(self) -> bool:
-        """Check if photo has GPS coordinates"""
-        return self.latitude is not None and self.longitude is not None
-    
     # Parsing from API JSON
     
     @classmethod
@@ -146,6 +149,24 @@ class PhotoModel:
                 # If parsing fails, leave as None
                 pass
         
+        # Parse first_imported timestamp
+        first_imported = None
+        if data.get('first_imported'):
+            try:
+                first_imported_str = data['first_imported'].replace('Z', '+00:00')
+                first_imported = datetime.fromisoformat(first_imported_str)
+            except (ValueError, AttributeError):
+                pass
+        
+        # Parse last_imported timestamp
+        last_imported = None
+        if data.get('last_imported'):
+            try:
+                last_imported_str = data['last_imported'].replace('Z', '+00:00')
+                last_imported = datetime.fromisoformat(last_imported_str)
+            except (ValueError, AttributeError):
+                pass
+        
         # Parse image_files list
         image_files = []
         if data.get('image_files') and isinstance(data['image_files'], list):
@@ -166,8 +187,14 @@ class PhotoModel:
             primary_filename=data.get('primary_filename'),
             image_files=image_files,
             taken_at=taken_at,
-            import_session_id=data.get('import_session_id'),
             rating=data.get('rating'),
+            
+            # Import tracking
+            import_session_id=data.get('import_session_id'),
+            first_imported=first_imported,
+            last_imported=last_imported,
+            has_gps=data.get('has_gps', False),
+            has_raw_companion=data.get('has_raw_companion', False),
             
             # EXIF
             camera_make=data.get('camera_make'),
@@ -179,8 +206,8 @@ class PhotoModel:
             iso=data.get('iso'),
             
             # GPS
-            latitude=data.get('latitude'),
-            longitude=data.get('longitude')
+            latitude=data.get('gps_latitude'),
+            longitude=data.get('gps_longitude')
         )
     
     def to_dict(self) -> dict:

@@ -91,11 +91,10 @@ class HomeView(BaseView):
             # Photo count
             try:
                 photos_response = self.api_client.get_photos(limit=1)
-                # Debug: print response to see structure
-                print(f"Photos response: {photos_response}")
-                total_count = photos_response.get('total', 0)
-                data_count = len(photos_response.get('data', []))
-                self.photo_count_label.setText(f"📷 Photos in database: {total_count} (fetched: {data_count})")
+                # Backend returns paginated response with meta.total
+                meta = photos_response.get('meta', {})
+                total_count = meta.get('total', 0)
+                self.photo_count_label.setText(f"📷 Photos in database: {total_count}")
             except Exception as e:
                 print(f"Error loading photo count: {e}")
                 self.photo_count_label.setText(f"📷 Photos: Error - {str(e)}")

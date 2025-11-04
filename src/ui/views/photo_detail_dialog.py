@@ -106,12 +106,19 @@ class PhotoDetailDialog(QMainWindow):
         self.api_client = api_client
         self.original_pixmap = None
         self.zoom_level = 1.0
+        self.loader = None  # Store reference to loader thread
         
         self.init_ui()
         self.load_preview()
     
     def closeEvent(self, event):
-        """Reset window count when window closes"""
+        """Clean up and reset window count when window closes"""
+        # Stop and wait for loader thread if it's running
+        if self.loader and self.loader.isRunning():
+            self.loader.wait(1000)  # Wait up to 1 second
+            if self.loader.isRunning():
+                self.loader.terminate()  # Force terminate if still running
+        
         PhotoDetailDialog._window_count = max(0, PhotoDetailDialog._window_count - 1)
         super().closeEvent(event)
     
@@ -242,6 +249,7 @@ class PhotoDetailDialog(QMainWindow):
         self.loader = ColdpreviewLoader(self.api_client, self.photo.hothash)
         self.loader.preview_loaded.connect(self.on_preview_loaded)
         self.loader.error_occurred.connect(self.on_preview_error)
+        self.loader.finished.connect(self.loader.deleteLater)  # Clean up thread when finished
         self.loader.start()
     
     def on_preview_loaded(self, image_data: bytes):

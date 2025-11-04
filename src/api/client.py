@@ -476,9 +476,13 @@ class APIClient:
         """
         url = f"{self.base_url}/api/v1/import-sessions/"
         params = {"offset": offset, "limit": limit}
+        print(f"DEBUG APIClient: GET {url} with params {params}")
         response = requests.get(url, headers=self._headers(), params=params)
+        print(f"DEBUG APIClient: Response status {response.status_code}")
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        print(f"DEBUG APIClient: Response JSON: {result}")
+        return result
     
     def update_import_session(self, import_id: int, status: Optional[str] = None,
                              processed_files: Optional[int] = None,
@@ -701,6 +705,8 @@ class APIClient:
         if session_id:
             payload["import_session_id"] = session_id
         
+        print(f"DEBUG APIClient: Sending import_photo with session_id={session_id}, payload has import_session_id={payload.get('import_session_id')}")  # DEBUG
+        
         response = requests.post(url, json=payload, headers=self._headers())
         response.raise_for_status()
         return response.json()
@@ -727,6 +733,343 @@ class APIClient:
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         
         response = requests.put(url, files=files, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    
+    # ========================================
+    # PHOTO SEARCH ENDPOINTS
+    # ========================================
+    
+    def search_photos_adhoc(self, criteria: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute ad-hoc photo search without saving.
+        
+        POST /api/v1/photo-searches/ad-hoc
+        
+        This is the primary search endpoint - send PhotoSearchRequest and get results.
+        Use this for one-time searches or before deciding to save a search.
+        
+        Args:
+            criteria: PhotoSearchCriteria.to_dict() result with filters
+            
+        Returns:
+            PaginatedResponse with matching photos
+            {
+                "data": [...],  # List of PhotoResponse objects
+                "meta": {"total": N, "offset": M, "limit": L, "page": P, "pages": Q}
+            }
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/ad-hoc"
+        response = requests.post(url, json=criteria, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def list_saved_searches(self, offset: int = 0, limit: int = 100, 
+                           favorites_only: bool = False) -> Dict[str, Any]:
+        """
+        List all saved searches for current user.
+        
+        GET /api/v1/photo-searches/?offset=0&limit=100&favorites_only=false
+        
+        Returns:
+            {
+                "searches": [...],  # List of SavedPhotoSearchSummary objects
+                "total": int,
+                "offset": int,
+                "limit": int
+            }
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/"
+        params = {"offset": offset, "limit": limit, "favorites_only": favorites_only}
+        response = requests.get(url, headers=self._headers(), params=params)
+        response.raise_for_status()
+        return response.json()
+    
+    def create_saved_search(self, name: str, search_criteria: Dict[str, Any],
+                           description: Optional[str] = None,
+                           is_favorite: bool = False) -> Dict[str, Any]:
+        """
+        Create a new saved photo search.
+        
+        POST /api/v1/photo-searches/
+        
+        Args:
+            name: User-friendly name (1-100 chars)
+            search_criteria: PhotoSearchRequest as dict (from PhotoSearchCriteria.to_dict())
+            description: Optional description (max 500 chars)
+            is_favorite: Mark as favorite
+            
+        Returns:
+            SavedPhotoSearchResponse with created search
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/"
+        data = {
+            "name": name,
+            "search_criteria": search_criteria,
+            "is_favorite": is_favorite
+        }
+        if description:
+            data["description"] = description
+        
+        response = requests.post(url, json=data, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def get_saved_search(self, search_id: int) -> Dict[str, Any]:
+        """
+        Get a specific saved search by ID.
+        
+        GET /api/v1/photo-searches/{search_id}
+        
+        Returns:
+            SavedPhotoSearchResponse
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/{search_id}"
+        response = requests.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def update_saved_search(self, search_id: int, name: Optional[str] = None,
+                           search_criteria: Optional[Dict[str, Any]] = None,
+                           description: Optional[str] = None,
+                           is_favorite: Optional[bool] = None) -> Dict[str, Any]:
+        """
+        Update a saved search.
+        
+        PUT /api/v1/photo-searches/{search_id}
+        
+        Args:
+            search_id: ID of search to update
+            name: New name (optional)
+            search_criteria: Updated criteria (optional)
+            description: Updated description (optional)
+            is_favorite: Updated favorite status (optional)
+            
+        Returns:
+            SavedPhotoSearchResponse with updated search
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/{search_id}"
+        data = {}
+        if name is not None:
+            data["name"] = name
+        if search_criteria is not None:
+            data["search_criteria"] = search_criteria
+        if description is not None:
+            data["description"] = description
+        if is_favorite is not None:
+            data["is_favorite"] = is_favorite
+        
+        response = requests.put(url, json=data, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def delete_saved_search(self, search_id: int):
+        """
+        Delete a saved search.
+        
+        DELETE /api/v1/photo-searches/{search_id}
+        
+        Returns:
+            204 No Content on success
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/{search_id}"
+        response = requests.delete(url, headers=self._headers())
+        response.raise_for_status()
+    
+    def execute_saved_search(self, search_id: int, 
+                            override_offset: Optional[int] = None,
+                            override_limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Execute a saved search and return photo results.
+        
+        POST /api/v1/photo-searches/{search_id}/execute
+        
+        This will run the saved search criteria and return matching photos.
+        Updates the last_executed timestamp and result_count for the saved search.
+        
+        You can override pagination parameters without modifying the saved search.
+        
+        Args:
+            search_id: ID of saved search to execute
+            override_offset: Override pagination offset (optional)
+            override_limit: Override pagination limit (optional)
+            
+        Returns:
+            PaginatedResponse with matching photos
+            {
+                "data": [...],  # List of PhotoResponse objects
+                "meta": {"total": N, "offset": M, "limit": L, "page": P, "pages": Q}
+            }
+        """
+        url = f"{self.base_url}/api/v1/photo-searches/{search_id}/execute"
+        params = {}
+        if override_offset is not None:
+            params["override_offset"] = override_offset
+        if override_limit is not None:
+            params["override_limit"] = override_limit
+        
+        response = requests.post(url, headers=self._headers(), params=params)
+        response.raise_for_status()
+        return response.json()
+    
+    # ========================================
+    # COLLECTIONS ENDPOINTS
+    # ========================================
+    
+    def list_collections(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """
+        List user's collections.
+        
+        GET /api/v1/collections
+        
+        Returns:
+            {
+                "collections": [
+                    {
+                        "id": int,
+                        "user_id": int,
+                        "name": str,
+                        "description": str,
+                        "photo_count": int,
+                        "cover_photo_hothash": str | None,
+                        "created_at": str,
+                        "updated_at": str
+                    }
+                ],
+                "total": int,
+                "limit": int,
+                "offset": int
+            }
+        """
+        url = f"{self.base_url}/api/v1/collections"
+        params = {"limit": limit, "offset": offset}
+        response = requests.get(url, params=params, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def create_collection(self, name: str, description: str = "", 
+                         hothashes: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Create a new collection.
+        
+        POST /api/v1/collections
+        
+        Args:
+            name: Collection name
+            description: Optional description
+            hothashes: Optional list of photo hothashes to add
+            
+        Returns:
+            Collection object with id, user_id, name, etc.
+        """
+        url = f"{self.base_url}/api/v1/collections"
+        data = {
+            "name": name,
+            "description": description
+        }
+        if hothashes:
+            data["hothashes"] = hothashes
+        
+        response = requests.post(url, json=data, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def get_collection(self, collection_id: int) -> Dict[str, Any]:
+        """
+        Get collection details with photo hothashes.
+        
+        GET /api/v1/collections/{collection_id}
+        
+        Returns:
+            {
+                "id": int,
+                "user_id": int,
+                "name": str,
+                "description": str,
+                "photo_count": int,
+                "cover_photo_hothash": str | None,
+                "hothashes": [str],
+                "created_at": str,
+                "updated_at": str
+            }
+        """
+        url = f"{self.base_url}/api/v1/collections/{collection_id}"
+        response = requests.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def update_collection(self, collection_id: int, 
+                         name: Optional[str] = None,
+                         description: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Update collection metadata (name, description).
+        
+        PUT /api/v1/collections/{collection_id}
+        
+        Returns:
+            Updated collection object
+        """
+        url = f"{self.base_url}/api/v1/collections/{collection_id}"
+        data = {}
+        if name is not None:
+            data["name"] = name
+        if description is not None:
+            data["description"] = description
+        
+        response = requests.put(url, json=data, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def delete_collection(self, collection_id: int):
+        """
+        Delete a collection.
+        
+        DELETE /api/v1/collections/{collection_id}
+        
+        Returns:
+            204 No Content on success
+        """
+        url = f"{self.base_url}/api/v1/collections/{collection_id}"
+        response = requests.delete(url, headers=self._headers())
+        response.raise_for_status()
+    
+    def add_photos_to_collection(self, collection_id: int, 
+                                 hothashes: List[str]) -> Dict[str, Any]:
+        """
+        Add photos to collection.
+        
+        POST /api/v1/collections/{collection_id}/photos
+        
+        Args:
+            collection_id: Collection ID
+            hothashes: List of photo hothashes to add
+            
+        Returns:
+            {"message": "Added N photos", "new_photo_count": int}
+        """
+        url = f"{self.base_url}/api/v1/collections/{collection_id}/photos"
+        data = {"hothashes": hothashes}
+        response = requests.post(url, json=data, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    
+    def remove_photos_from_collection(self, collection_id: int,
+                                     hothashes: List[str]) -> Dict[str, Any]:
+        """
+        Remove photos from collection.
+        
+        DELETE /api/v1/collections/{collection_id}/photos
+        
+        Args:
+            collection_id: Collection ID
+            hothashes: List of photo hothashes to remove
+            
+        Returns:
+            {"message": "Removed N photos", "new_photo_count": int}
+        """
+        url = f"{self.base_url}/api/v1/collections/{collection_id}/photos"
+        data = {"hothashes": hothashes}
+        response = requests.delete(url, json=data, headers=self._headers())
         response.raise_for_status()
         return response.json()
     

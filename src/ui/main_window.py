@@ -10,14 +10,17 @@ from ..storage.settings import Settings
 from ..api.client import APIClient
 from ..auth.auth_manager import AuthManager
 from ..services.thumbnail_cache import ThumbnailCache
-from ..services.selection_window_manager import SelectionWindowManager
+from ..services.collection_manager import CollectionManager
+from ..services.search_manager import SearchManager
 from .navigation import NavigationPanel
 from .login_dialog import LoginDialog
 from .register_dialog import RegisterDialog
 from .views.home_view import HomeView
-from .views.gallery_view import GalleryView
+from .views.collections_view import CollectionsView
 from .views.import_view import ImportView
 from .views.stats_view import StatsView
+from .views.search_management_view import SearchManagementView
+from .views.timeline_view import TimelineView
 
 
 class MainWindow(QMainWindow):
@@ -35,13 +38,16 @@ class MainWindow(QMainWindow):
         self.api_client = APIClient()
         self.auth_manager = AuthManager(self.api_client, self.settings)
         
-        # Shared thumbnail cache and selection window manager
+        # Shared thumbnail cache and collection manager
         self.thumbnail_cache = ThumbnailCache()
-        self.selection_window_manager = SelectionWindowManager(
+        self.collection_manager = CollectionManager(
             self.api_client, 
             self.thumbnail_cache,
             parent=self
         )
+        
+        # Search manager for saved searches
+        self.search_manager = SearchManager()
         
         self._setup_ui()
         self._init_views()
@@ -163,35 +169,16 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("&File")
         
-        # Selection submenu
-        selection_menu = file_menu.addMenu("&Selection")
+        # Collection submenu
+        collection_menu = file_menu.addMenu("&Collection")
         
-        save_selection_action = QAction("&Save Selection", self)
-        save_selection_action.setShortcut("Ctrl+S")
-        save_selection_action.triggered.connect(self._save_selection)
-        selection_menu.addAction(save_selection_action)
+        clear_collection_action = QAction("&Clear Working Collection", self)
+        clear_collection_action.triggered.connect(self._clear_collection)
+        collection_menu.addAction(clear_collection_action)
         
-        save_selection_as_action = QAction("Save Selection &As...", self)
-        save_selection_as_action.setShortcut("Ctrl+Shift+S")
-        save_selection_as_action.triggered.connect(self._save_selection_as)
-        selection_menu.addAction(save_selection_as_action)
-        
-        open_selection_action = QAction("&Open Selection...", self)
-        open_selection_action.setShortcut("Ctrl+O")
-        open_selection_action.triggered.connect(self._open_selection)
-        selection_menu.addAction(open_selection_action)
-        
-        selection_menu.addSeparator()
-        
-        clear_selection_action = QAction("&Clear Selection", self)
-        clear_selection_action.triggered.connect(self._clear_selection)
-        selection_menu.addAction(clear_selection_action)
-        
-        selection_menu.addSeparator()
-        
-        close_selection_action = QAction("Close Selection &Window", self)
-        close_selection_action.triggered.connect(self._close_selection_window)
-        selection_menu.addAction(close_selection_action)
+        close_collection_action = QAction("Close Collection &Window", self)
+        close_collection_action.triggered.connect(self._close_collection_window)
+        collection_menu.addAction(close_collection_action)
         
         file_menu.addSeparator()
         
@@ -229,9 +216,11 @@ class MainWindow(QMainWindow):
         """Initialize all views"""
         self.views = {
             'home': HomeView(self.api_client),
-            'gallery': GalleryView(self.api_client, self.thumbnail_cache, self.selection_window_manager),
+            'organizer': CollectionsView(self.api_client, self.thumbnail_cache),
             'import': ImportView(self.api_client, self.auth_manager),
+            'timeline': TimelineView(self.api_client),
             'stats': StatsView(self.api_client),
+            'searches': SearchManagementView(self.api_client),
         }
         
         # Add views to stack
@@ -240,8 +229,10 @@ class MainWindow(QMainWindow):
         
         # Add navigation buttons
         self.nav_panel.add_button("Home", "home")
-        self.nav_panel.add_button("Gallery", "gallery")
+        self.nav_panel.add_button("Organizer", "organizer")
         self.nav_panel.add_button("Import", "import")
+        self.nav_panel.add_button("Timeline", "timeline")
+        self.nav_panel.add_button("Searches", "searches")
         self.nav_panel.add_button("Stats", "stats")
         self.nav_panel.finish_layout()
     
@@ -259,6 +250,17 @@ class MainWindow(QMainWindow):
             view.status_error.connect(self.show_error)
             view.status_success.connect(self.show_success)
             view.status_info.connect(self.show_info)
+        
+        # Connect search execution to organizer view
+        search_view = self.views.get('searches')
+        organizer_view = self.views.get('organizer')
+        if search_view and organizer_view:
+            search_view.view_in_organizer.connect(self._view_search_in_organizer)
+        
+        # Connect timeline to organizer view
+        timeline_view = self.views.get('timeline')
+        if timeline_view and organizer_view:
+            timeline_view.view_range_in_organizer.connect(self._view_timeline_range_in_organizer)
     
     def show_view(self, view_id):
         """Show a view by id"""
@@ -351,33 +353,76 @@ class MainWindow(QMainWindow):
             self.show_info("Logged out")
             self._show_login()
     
-    def _save_selection(self):
-        """Save current selection"""
-        if self.selection_window_manager.save_selection():
-            self.show_info("Selection saved")
+    def _clear_collection(self):
+        """Clear all photos from working collection"""
+        if self.collection_manager.clear_collection():
+            self.show_info("Collection cleared")
     
-    def _save_selection_as(self):
-        """Save selection with new filename"""
-        if self.selection_window_manager.save_selection_as():
-            self.show_info("Selection saved")
+    def _close_collection_window(self):
+        """Close the CollectionWindow"""
+        if self.collection_manager.close_window():
+            self.show_info("Collection window closed")
     
-    def _open_selection(self):
-        """Open a SelectionWindow from file"""
-        if self.selection_window_manager.open_selection():
-            self.show_info("Selection opened")
     
-    def _clear_selection(self):
-        """Clear all photos from selection"""
-        if self.selection_window_manager.clear_selection():
-            self.show_info("Selection cleared")
+    def _view_search_in_organizer(self, saved_search, hothashes, photos_data):
+        """
+        View search results in Organizer.
+        Called when user clicks "View in Organizer" from SearchManagementView.
+        """
+        # Get Organizer view
+        organizer_view = self.views.get('organizer')
+        if not organizer_view:
+            return
+        
+        # Switch to organizer view
+        self.show_view('organizer')
+        
+        # Load search results into left panel (with photo data)
+        organizer_view.load_search_results(hothashes, saved_search.name, photos_data)
+        
+        # Show feedback
+        self.show_info(f"Viewing: {saved_search.name} ({len(hothashes)} photos)")
     
-    def _close_selection_window(self):
-        """Close the SelectionWindow"""
-        if self.selection_window_manager.close_window():
-            self.show_info("Selection window closed")
+    def _view_timeline_range_in_organizer(self, start_date, end_date, description):
+        """
+        View timeline date range in Organizer.
+        Called when user clicks "View in Organizer" from TimelineView.
+        """
+        from datetime import datetime
+        from ..models.search_data import PhotoSearchCriteria
+        
+        # Get Organizer view
+        organizer_view = self.views.get('organizer')
+        if not organizer_view:
+            return
+        
+        # Create search criteria for date range
+        # Use taken_after and taken_before (not taken_at_start/end)
+        criteria = PhotoSearchCriteria(
+            taken_after=datetime.combine(start_date, datetime.min.time()).isoformat(),
+            taken_before=datetime.combine(end_date, datetime.max.time()).isoformat()
+        )
+        
+        try:
+            # Execute search
+            self.show_info(f"Loading photos for {description}...")
+            response = self.api_client.search_photos_adhoc(criteria.to_dict())
+            photos_data = response.get('data', [])
+            hothashes = {photo['hothash'] for photo in photos_data}
+            
+            # Switch to organizer view
+            self.show_view('organizer')
+            
+            # Load results into left panel
+            organizer_view.load_search_results(hothashes, description, photos_data)
+            
+            # Show feedback
+            self.show_success(f"Loaded {len(photos_data)} photos")
+        
+        except Exception as e:
+            self.show_error(f"Failed to load timeline range: {str(e)}")
     
     def _restore_state(self):
-        """Restore window state from settings"""
         geometry = self.settings.get_window_geometry()
         if geometry:
             self.restoreGeometry(geometry)
@@ -408,27 +453,9 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close"""
-        # Check for unsaved selection window
-        if self.selection_window_manager.has_unsaved_changes():
-            reply = QMessageBox.question(
-                self,
-                "Unsaved Changes",
-                "Selection has unsaved changes. Save before closing?",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                QMessageBox.Cancel
-            )
-            if reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-            elif reply == QMessageBox.Yes:
-                if not self.selection_window_manager.save_selection():
-                    # Save was cancelled
-                    event.ignore()
-                    return
-        
-        # Close selection window if open
-        if self.selection_window_manager.has_window():
-            self.selection_window_manager.window.close()
+        # Close collection window if open
+        if self.collection_manager.has_window():
+            self.collection_manager.window.close()
         
         # Save window state
         self._save_state()

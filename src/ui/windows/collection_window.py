@@ -1,4 +1,4 @@
-"""SelectionWindow - Window for viewing and editing a photo selection"""
+"""CollectionWindow - Window for viewing and editing a photo collection"""
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QLineEdit, QTextEdit, QScrollArea, 
                                QGridLayout, QPushButton, QFrame, QApplication,
@@ -8,39 +8,38 @@ from PySide6.QtGui import QAction, QKeySequence, QCloseEvent
 from typing import Dict, Optional
 from pathlib import Path
 
-from ...models.selection_set import SelectionSet
+from ...models.collection import Collection
 from ...models.photo_model import PhotoModel
 from ...services.thumbnail_cache import ThumbnailCache
-from ...services.selection_manager import PhotoSelectionManager
+from ...services.checked_photos_manager import CheckedPhotosManager
 from ...operations.set_rating_operation import SetRatingOperation
-from ..views.gallery_view import PhotoThumbnail
+from ..widgets.photo_thumbnail import PhotoThumbnail
 
 
-class SelectionWindow(QMainWindow):
+class CollectionWindow(QMainWindow):
     """
-    Window for viewing and editing a photo selection.
+    Window for viewing and editing a photo collection.
     
-    Similar to Gallery but displays photos from a SelectionSet instead of
-    database query. Supports File operations (New/Open/Save/Close) and
-    selection operations (rating, etc.).
+    Displays photos from a Collection. Supports File operations 
+    (New/Open/Save/Close) and collection operations (rating, etc.).
     """
     
     # Signals
     closed = Signal(object)  # Emits self when window closes
     
-    def __init__(self, selection_set: SelectionSet, api_client, 
+    def __init__(self, collection: Collection, api_client, 
                  cache: Optional[ThumbnailCache] = None):
         super().__init__()
         
-        self.selection_set = selection_set
+        self.collection = collection
         self.api_client = api_client
         self.cache = cache or ThumbnailCache()
         
-        # Selection manager for this window (independent from Gallery)
-        self.selection_manager = PhotoSelectionManager()
-        self.selection_manager.create_set("window_selection")
-        self.selection_manager.set_active("window_selection")
-        self.selection_manager.subscribe(self._on_selection_changed)
+        # Checkmark manager for this window (independent from other views)
+        self.checked_photos = CheckedPhotosManager()
+        self.checked_photos.create_set("window_selection")
+        self.checked_photos.set_active("window_selection")
+        self.checked_photos.subscribe(self._on_selection_changed)
         
         # Photo data
         self.photos: Dict[str, PhotoModel] = {}  # hothash → PhotoModel
@@ -114,8 +113,8 @@ class SelectionWindow(QMainWindow):
         title_label.setFixedWidth(80)
         title_layout.addWidget(title_label)
         
-        self.title_edit = QLineEdit(self.selection_set.title)
-        self.title_edit.setStyleSheet("""
+        self.name_edit = QLineEdit(self.collection.name)
+        self.name_edit.setStyleSheet("""
             QLineEdit {
                 background-color: #333;
                 color: #fff;
@@ -126,8 +125,8 @@ class SelectionWindow(QMainWindow):
                 font-weight: bold;
             }
         """)
-        self.title_edit.textChanged.connect(self._on_metadata_changed)
-        title_layout.addWidget(self.title_edit)
+        self.name_edit.textChanged.connect(self._on_metadata_changed)
+        title_layout.addWidget(self.name_edit)
         
         layout.addLayout(title_layout)
         
@@ -139,7 +138,7 @@ class SelectionWindow(QMainWindow):
         desc_label.setAlignment(Qt.AlignTop)
         desc_layout.addWidget(desc_label)
         
-        self.desc_edit = QTextEdit(self.selection_set.description)
+        self.desc_edit = QTextEdit(self.collection.description)
         self.desc_edit.setStyleSheet("""
             QTextEdit {
                 background-color: #333;
@@ -172,24 +171,24 @@ class SelectionWindow(QMainWindow):
         layout.setContentsMargins(10, 5, 10, 5)
         
         # Photo count
-        self.count_label = QLabel(f"{len(self.selection_set)} photos")
+        self.count_label = QLabel(f"{len(self.collection)} photos")
         self.count_label.setStyleSheet("color: #fff; font-weight: bold; font-size: 11pt;")
         layout.addWidget(self.count_label)
         
         layout.addSpacing(20)
         
-        # Selection info
+        # Collection info
         self.selection_label = QLabel("0 selected")
         self.selection_label.setStyleSheet("color: #888; font-size: 10pt;")
         layout.addWidget(self.selection_label)
         
-        # Selection controls
+        # Collection controls
         btn_select_all = QPushButton("Select All")
         btn_select_all.clicked.connect(self._select_all)
         layout.addWidget(btn_select_all)
         
         btn_clear = QPushButton("Clear")
-        btn_clear.clicked.connect(lambda: self.selection_manager.clear())
+        btn_clear.clicked.connect(lambda: self.checked_photos.clear())
         layout.addWidget(btn_clear)
         
         layout.addStretch()
@@ -246,7 +245,7 @@ class SelectionWindow(QMainWindow):
         
         clear_action = QAction("&Clear Selection", self)
         clear_action.setShortcut(QKeySequence("Escape"))
-        clear_action.triggered.connect(lambda: self.selection_manager.clear())
+        clear_action.triggered.connect(lambda: self.checked_photos.clear())
         edit_menu.addAction(clear_action)
         
         edit_menu.addSeparator()
@@ -261,7 +260,7 @@ class SelectionWindow(QMainWindow):
         self.status_label.setText("Loading photos...")
         QApplication.processEvents()
         
-        hothashes = list(self.selection_set.hothashes)
+        hothashes = list(self.collection.hothashes)
         total = len(hothashes)
         
         for i, hothash in enumerate(hothashes):
@@ -334,7 +333,7 @@ class SelectionWindow(QMainWindow):
                     thumb.set_image(thumbnail)
                 
                 # Set selection state
-                is_selected = self.selection_manager.is_selected(hothash)
+                is_selected = self.checked_photos.is_selected(hothash)
                 thumb.set_selected(is_selected)
         
         # Layout in grid
@@ -354,16 +353,16 @@ class SelectionWindow(QMainWindow):
         if modifiers & Qt.ShiftModifier and self._last_clicked_hothash:
             self._select_range(self._last_clicked_hothash, photo.hothash)
         elif modifiers & Qt.ControlModifier:
-            is_selected = self.selection_manager.toggle(photo.hothash)
+            is_selected = self.checked_photos.toggle(photo.hothash)
             thumb = self.thumbnail_widgets.get(photo.hothash)
             if thumb:
                 thumb.set_selected(is_selected)
             self._last_clicked_hothash = photo.hothash
         else:
-            self.selection_manager.clear()
+            self.checked_photos.clear()
             for thumb in self.thumbnail_widgets.values():
                 thumb.set_selected(False)
-            is_selected = self.selection_manager.toggle(photo.hothash)
+            is_selected = self.checked_photos.toggle(photo.hothash)
             thumb = self.thumbnail_widgets.get(photo.hothash)
             if thumb:
                 thumb.set_selected(is_selected)
@@ -385,7 +384,7 @@ class SelectionWindow(QMainWindow):
                 start_idx, end_idx = end_idx, start_idx
             for idx in range(start_idx, end_idx + 1):
                 hothash = hothashes[idx]
-                self.selection_manager.select(hothash)
+                self.checked_photos.select(hothash)
                 thumb = self.thumbnail_widgets.get(hothash)
                 if thumb:
                     thumb.set_selected(True)
@@ -396,13 +395,13 @@ class SelectionWindow(QMainWindow):
     def _select_all(self):
         """Select all photos"""
         hothashes = list(self.photos.keys())
-        self.selection_manager.select_all(hothashes)
+        self.checked_photos.select_all(hothashes)
         for thumb in self.thumbnail_widgets.values():
             thumb.set_selected(True)
     
     def _on_selection_changed(self):
         """Update UI when selection changes"""
-        count = self.selection_manager.count()
+        count = self.checked_photos.count()
         self.selection_label.setText(f"{count} selected")
         
         has_selection = count > 0
@@ -411,14 +410,14 @@ class SelectionWindow(QMainWindow):
     
     def _on_metadata_changed(self):
         """Called when title or description is edited"""
-        new_title = self.title_edit.text()
+        new_title = self.name_edit.text()
         new_desc = self.desc_edit.toPlainText()
-        self.selection_set.update_metadata(new_title, new_desc)
+        self.collection.update_metadata(new_title, new_desc)
         self._update_window_title()
     
     def _set_rating(self):
         """Set rating for selected photos"""
-        selected_photos = [self.photos[h] for h in self.selection_manager.get_selected() 
+        selected_photos = [self.photos[h] for h in self.checked_photos.get_selected() 
                           if h in self.photos]
         if selected_photos:
             operation = SetRatingOperation(self.api_client, self)
@@ -426,7 +425,7 @@ class SelectionWindow(QMainWindow):
     
     def _remove_selected(self):
         """Remove selected photos from this selection"""
-        selected = self.selection_manager.get_selected()
+        selected = self.checked_photos.get_selected()
         if not selected:
             return
         
@@ -439,8 +438,8 @@ class SelectionWindow(QMainWindow):
         )
         
         if reply == QMessageBox.Yes:
-            # Remove from SelectionSet
-            self.selection_set.remove_photos(selected)
+            # Remove from Collection
+            self.collection.remove_photos(selected)
             
             # Remove from UI
             for hothash in selected:
@@ -450,83 +449,29 @@ class SelectionWindow(QMainWindow):
                 self.photos.pop(hothash, None)
             
             # Clear selection and refresh
-            self.selection_manager.clear()
+            self.checked_photos.clear()
             self._refresh_view()
-            self.count_label.setText(f"{len(self.selection_set)} photos")
+            self.count_label.setText(f"{len(self.collection)} photos")
             self.status_label.setText(f"Removed {len(selected)} photo(s)")
             self._update_window_title()
     
     def add_photos(self, hothashes: set):
-        """Add photos to this selection (called from Gallery)"""
-        added = self.selection_set.add_photos(hothashes)
+        """Add photos to this selection"""
+        added = self.collection.add_photos(hothashes)
         if added > 0:
             self._load_photos()
-            self.count_label.setText(f"{len(self.selection_set)} photos")
+            self.count_label.setText(f"{len(self.collection)} photos")
             self.status_label.setText(f"Added {added} photo(s)")
             self._update_window_title()
     
-    def save(self):
-        """Save selection to file"""
-        if not self.selection_set.filepath:
-            self.save_as()
-            return
-        
-        try:
-            self.selection_set.save(self.selection_set.filepath)
-            self.status_label.setText(f"Saved to {Path(self.selection_set.filepath).name}")
-            self._update_window_title()
-        except Exception as e:
-            QMessageBox.critical(self, "Save Error", f"Failed to save:\n{e}")
-    
-    def save_as(self):
-        """Save selection to new file"""
-        default_dir = str(Path.home() / "Pictures" / "ImaLink" / "Selections")
-        default_filename = f"{self.selection_set.title}.imalink"
-        default_path = str(Path(default_dir) / default_filename)
-        
-        filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save Selection As",
-            default_path,
-            "ImaLink Selection (*.imalink);;JSON Files (*.json)"
-        )
-        
-        if filepath:
-            try:
-                self.selection_set.save(filepath)
-                self.status_label.setText(f"Saved to {Path(filepath).name}")
-                self._update_window_title()
-            except Exception as e:
-                QMessageBox.critical(self, "Save Error", f"Failed to save:\n{e}")
-    
     def _update_window_title(self):
-        """Update window title to show name and modified state"""
-        title = self.selection_set.title or "Untitled"
-        if self.selection_set.is_modified:
-            title += " *"
-        if self.selection_set.filepath:
-            title += f" - {Path(self.selection_set.filepath).name}"
-        self.setWindowTitle(title)
+        """Update window title to show name"""
+        title = self.collection.name or "Untitled"
+        synced_marker = " (synced)" if self.collection.is_synced else ""
+        self.setWindowTitle(f"{title}{synced_marker}")
     
     def closeEvent(self, event: QCloseEvent):
-        """Handle window close - ask to save if modified"""
-        if self.selection_set.is_modified:
-            reply = QMessageBox.question(
-                self, "Save Changes?",
-                f"Save changes to '{self.selection_set.title}'?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save
-            )
-            
-            if reply == QMessageBox.Save:
-                self.save()
-                if self.selection_set.is_modified:
-                    # Save was cancelled or failed
-                    event.ignore()
-                    return
-            elif reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-        
+        """Handle window close"""
         self.closed.emit(self)
         event.accept()
     
@@ -542,12 +487,12 @@ class SelectionWindow(QMainWindow):
             self._select_all()
             event.accept()
         elif event.key() == Qt.Key_Escape:
-            self.selection_manager.clear()
+            self.checked_photos.clear()
             for thumb in self.thumbnail_widgets.values():
                 thumb.set_selected(False)
             event.accept()
         elif event.key() == Qt.Key_Delete:
-            if self.selection_manager.count() > 0:
+            if self.checked_photos.count() > 0:
                 self._remove_selected()
             event.accept()
         else:
