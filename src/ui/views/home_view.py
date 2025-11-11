@@ -80,15 +80,24 @@ class HomeView(BaseView):
             base_url = self.api_client.base_url
             self.connection_label.setText(f"🔌 Backend: {base_url}")
             
-            # User info
+            # Check if user is logged in by checking for auth token
+            if not hasattr(self.api_client, 'token') or not self.api_client.token:
+                # Not logged in - show guest info
+                self.user_label.setText(f"👤 User: Not logged in (Guest)")
+                self.photo_count_label.setText(f"📷 Photos: Login required")
+                return
+            
+            # User info (requires authentication)
             try:
                 user_data = self.api_client.get_current_user()
                 username = user_data.get('username', 'Unknown')
                 self.user_label.setText(f"👤 User: {username}")
             except Exception as e:
-                self.user_label.setText(f"👤 User: Error - {str(e)}")
+                self.user_label.setText(f"👤 User: Not logged in")
+                self.photo_count_label.setText(f"📷 Photos: Login required")
+                return
             
-            # Photo count
+            # Photo count (requires authentication)
             try:
                 photos_response = self.api_client.get_photos(limit=1)
                 # Backend returns paginated response with meta.total
@@ -97,7 +106,7 @@ class HomeView(BaseView):
                 self.photo_count_label.setText(f"📷 Photos in database: {total_count}")
             except Exception as e:
                 print(f"Error loading photo count: {e}")
-                self.photo_count_label.setText(f"📷 Photos: Error - {str(e)}")
+                self.photo_count_label.setText(f"📷 Photos: Login required")
                 
         except Exception as e:
             self.connection_label.setText(f"🔌 Backend: Connection error")

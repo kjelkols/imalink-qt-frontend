@@ -62,35 +62,40 @@ class ViewerView(BaseView):
         try:
             # Try coldpreview first
             preview_data = self.api_client.get_coldpreview(photo.hothash, width=1920, height=1080)
-            self._display_image(preview_data, "coldpreview")
+            self._display_image(preview_data, "coldpreview", scale_to_fit=True)
         except Exception as e:
             # Fallback to hotpreview
             try:
                 preview_data = self.api_client.get_hotpreview(photo.hothash)
-                self._display_image(preview_data, "hotpreview (coldpreview failed)")
+                self._display_image(preview_data, "hotpreview (coldpreview failed)", scale_to_fit=False)
             except Exception as e2:
                 self.image_label.setText(f"Failed to load image:\n{e2}")
                 self.status_label.setText(f"Error: {e2}")
     
-    def _display_image(self, image_data: bytes, source: str):
+    def _display_image(self, image_data: bytes, source: str, scale_to_fit: bool = True):
         """Display image data"""
         pixmap = QPixmap()
         if pixmap.loadFromData(image_data):
             self.original_pixmap = pixmap
             
-            # Scale to fit scroll area
-            available_width = self.scroll_area.width() - 20
-            available_height = self.scroll_area.height() - 20
-            
-            if available_width > 0 and available_height > 0:
-                scaled_pixmap = pixmap.scaled(
-                    available_width, available_height,
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
-                self.image_label.setPixmap(scaled_pixmap)
-                self.image_label.resize(scaled_pixmap.size())
+            if scale_to_fit:
+                # Scale to fit scroll area
+                available_width = self.scroll_area.width() - 20
+                available_height = self.scroll_area.height() - 20
+                
+                if available_width > 0 and available_height > 0:
+                    scaled_pixmap = pixmap.scaled(
+                        available_width, available_height,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(scaled_pixmap)
+                    self.image_label.resize(scaled_pixmap.size())
+                else:
+                    self.image_label.setPixmap(pixmap)
             else:
+                # Show at original size (for hotpreview placeholder)
                 self.image_label.setPixmap(pixmap)
+                self.image_label.resize(pixmap.size())
             
             # Update status
             size_kb = len(image_data) / 1024
